@@ -1,81 +1,113 @@
-# MGM2 仓库说明
+# MGM2
 
-`MGM2` 是一个面向微生物组 OTU 表的预训练项目。当前主实现位于 [src](/data6/zhanghaohong/projects/MWorld/MGM2/src)，核心是：
+MGM2 is a microbiome pretraining project built around OTU abundance modeling. The current codepath lives in [`src/`](./src) and focuses on masked abundance prediction rather than token identity reconstruction.
 
-- 基于 `NTv3` OTU embedding 的 Transformer backbone
-- masked `bin` 预测
-- masked `log-abundance` 回归（默认监督最高 1 个 bin，可配置扩大到 top-k bins）
-- 可选的 `CLS -> Qwen3` 样本级对比对齐任务
+## What It Does
 
-旧版实验代码保留在 `legacy_code/`，当前开发和使用都应以 `src/` 为准。
+The current model uses NTv3 OTU embeddings with a Transformer backbone and supports:
 
-## 目录
+- masked abundance-bin prediction
+- masked log-abundance regression
+- optional CLS-to-Qwen3 contrastive alignment at the sample level
+
+Recent design choices in the active codepath:
+
+- no legacy `presence` task
+- masking corrupts only the abundance channel and preserves OTU identity
+- `quantile` binning is performed independently within each sample
+- regression supervision is configurable with `regression_top_k_bins`
+
+## Repository Layout
 
 ```text
 MGM2/
-├── src/                     # 当前主实现
-│   ├── configs/            # 严格配置定义
-│   ├── data/               # 数据构建、预处理、dataset、loader
-│   ├── losses/             # 多任务损失
-│   ├── models/             # Backbone 与 heads
-│   ├── training/           # Lightning 训练入口
+├── src/                         # Main implementation
+│   ├── configs/                 # Strict config definitions
+│   ├── data/                    # Dataset building, preprocessing, dataloaders
+│   ├── losses/                  # Multi-task loss definitions
+│   ├── models/                  # Backbone and prediction heads
+│   ├── training/                # Lightning module and training entrypoint
 │   ├── README.md
 │   └── README_ANALYSIS.md
-├── tests/                  # 当前回归测试
-├── docs/                   # 设计文档、计划、仓库说明
-├── legacy_code/            # 历史代码，仅存档
-├── ntv3_embeddings/        # NTv3 embedding 文件
-├── qwen3_embeddings/       # Qwen3 样本 embedding 文件
-└── data/                   # 预处理数据与原始 OTU 表
+├── tests/                       # Regression tests for the active codepath
+├── docs/repository_guide_zh.md  # Detailed Chinese repository guide
+├── qwen3_keywords_embedding.py  # Build sample-level Qwen3 target embeddings
+├── ntv3_embedding.py            # Build / inspect NTv3-related embeddings
+└── scripts/validate_dataset.py  # Dataset validation utility
 ```
 
-## 当前训练任务
+## What Is Not Included
 
-默认训练是双任务 masked pretraining：
+This public repository intentionally excludes large local artifacts and non-essential local files, including:
 
-1. `bin` 分类：预测被监督 mask 位置的丰度区间。
-2. `regression` 回归：预测被监督 mask 位置的 log 变换后丰度。
+- raw data and processed datasets
+- NTv3 and Qwen3 embedding files
+- checkpoints and training outputs
+- legacy experimental code
+- local planning notes and debug-only scripts
 
-可选第三项不是 token 级任务，而是样本级对齐任务：
+You need to prepare or mount these resources separately in your own environment.
 
-3. `qwen3_alignment`：用最后一层 `CLS` 表征和外部 `Qwen3` 关键词 embedding 做 batch 内对比学习。
+## Quick Start
 
-## 快速开始
+### 1. Build a preprocessed dataset
 
-### 1. 构建预训练数据集
+From a CSV OTU table:
 
 ```bash
 python src/data/build_dataset.py   --otu_table data/otu_table.csv   --format csv   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --output data/pretrain_dataset.pkl
 ```
 
-如果输入是 BIOM：
+From a BIOM OTU table:
 
 ```bash
 python src/data/build_dataset.py   --otu_table data/otu_table.biom   --format biom   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --output data/pretrain_dataset.pkl
 ```
 
-### 2. 启动训练
+### 2. Train the default dual-task model
 
 ```bash
 python src/training/Train.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --config src/configs/mgm2_default.json
 ```
 
-启用 `Qwen3` 对齐：
+### 3. Enable optional Qwen3 alignment
 
 ```bash
 python src/training/Train.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --enable_qwen3_alignment   --qwen3_embedding_path qwen3_embeddings/microbeatlas_keywords_emb.h5
 ```
 
-## 关键约束
+## Core Configuration
 
-- `src/` 已经彻底移除旧 `presence` 任务。
-- masking 只腐蚀 abundance 通道，保留 OTU identity embedding。
-- 回归目标是预处理后的 `log-abundance`，不是原始相对丰度。
-- `Qwen3` 对齐开启时，样本缺少对应 `sample_id` 不会被丢弃，只是不计算该条 alignment loss。
-- 如果 `Qwen3` embedding 文件不存在或维度与配置不匹配，当前实现会尽早报错。
+The main config entry is [`src/configs/mgm2_default.json`](./src/configs/mgm2_default.json).
 
-## 文档入口
+Important abundance-related settings:
 
-- [src/README.md](/data6/zhanghaohong/projects/MWorld/MGM2/src/README.md)：当前 `src` 包的使用说明。
-- [src/README_ANALYSIS.md](/data6/zhanghaohong/projects/MWorld/MGM2/src/README_ANALYSIS.md)：当前实现分析与设计说明。
-- [docs/repository_guide_zh.md](/data6/zhanghaohong/projects/MWorld/MGM2/docs/repository_guide_zh.md)：详细中文仓库导览。
+- `binning_method`: `quantile` or `fixed_threshold`
+- `regression_top_k_bins`: how many highest bins participate in regression supervision
+- `num_bins`: number of abundance bins
+- `min_abundance`, `output_min`, `output_max`: log-abundance preprocessing controls
+
+Important optional alignment settings:
+
+- `qwen3_alignment.enabled`
+- `qwen3_alignment.embedding_path`
+- `qwen3_alignment.projection_dim`
+- `qwen3_alignment.temperature`
+- `qwen3_alignment.loss_weight`
+
+## Notes on Data Semantics
+
+- dataset building stores raw relative abundance
+- training-time preprocessing applies log transformation and clipping
+- regression targets are preprocessed log-abundance values, not raw abundance
+- Qwen3-alignment samples without matching `sample_id` are kept, but excluded from alignment loss
+
+## Documentation
+
+- [`src/README.md`](./src/README.md): package-level usage notes
+- [`src/README_ANALYSIS.md`](./src/README_ANALYSIS.md): implementation notes and design analysis
+- [`docs/repository_guide_zh.md`](./docs/repository_guide_zh.md): detailed Chinese guide to the full repository
+
+## Verification
+
+The active codepath is covered by regression tests in [`tests/test_mgm2_regressions.py`](./tests/test_mgm2_regressions.py).
