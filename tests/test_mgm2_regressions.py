@@ -533,6 +533,14 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertAlmostEqual(0.1, config.training.val_ratio)
         self.assertAlmostEqual(1.0, config.training.train_ratio + config.training.val_ratio)
 
+    def test_default_config_uses_small_model_preset(self):
+        config = MGM2Config.load("src/configs/mgm2_default.json")
+
+        self.assertEqual(224, config.model.hidden_size)
+        self.assertEqual(6, config.model.num_hidden_layers)
+        self.assertEqual(4, config.model.num_attention_heads)
+        self.assertEqual(896, config.model.intermediate_size)
+
 
     def test_builder_uses_relative_abundance_for_csv(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -986,7 +994,14 @@ class MGM2RegressionTests(unittest.TestCase):
 
         self.assertTrue(script_path.exists())
         self.assertIn("scale_small", script_text)
+        self.assertIn("scale_medium", script_text)
         self.assertIn("scale_large", script_text)
+        self.assertIn("scale_xlarge", script_text)
+        self.assertIn('"scale_small|224|6|4|896"', script_text)
+        self.assertIn('"scale_medium|320|6|5|1280"', script_text)
+        self.assertIn('"scale_large|384|8|6|1536"', script_text)
+        self.assertIn('"scale_xlarge|512|10|8|2048"', script_text)
+        self.assertNotIn("scale_medium_large", script_text)
         self.assertIn("src/training/Pretrain.py", script_text)
         self.assertIn('BASE_CONFIG="', script_text)
         self.assertNotIn('Usage:', script_text)

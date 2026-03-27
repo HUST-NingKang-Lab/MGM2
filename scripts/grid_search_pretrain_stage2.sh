@@ -21,10 +21,10 @@ DEVICES=(6 7)
 EXPERIMENT_PREFIX="stage2_scale"
 
 PRESETS=(
-  "scale_small|128|4|4|512"
-  "scale_medium|256|6|4|1024"
-  "scale_medium_large|256|8|8|1024"
-  "scale_large|512|8|8|2048"
+  "scale_small|224|6|4|896"
+  "scale_medium|320|6|5|1280"
+  "scale_large|384|8|6|1536"
+  "scale_xlarge|512|10|8|2048"
 )
 
 for required in "$BASE_CONFIG" "$DATA_FILE" "$NTV3_EMBEDDING_PATH"; do
