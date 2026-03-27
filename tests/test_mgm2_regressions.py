@@ -987,6 +987,8 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertIn('DATA_FILE="', script_text)
         self.assertIn('if (( ${#QWEN3_CONFIG_OVERRIDES[@]} )); then', script_text)
         self.assertIn('if (( ${#QWEN3_PRETRAIN_ARGS[@]} )); then', script_text)
+        self.assertIn('python -u src/training/Pretrain.py', script_text)
+        self.assertIn('| tee "${run_dir}/train.log"', script_text)
         self.assertNotIn('Usage:', script_text)
         self.assertNotIn('if [[ $#', script_text)
 
@@ -1007,6 +1009,8 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertIn("src/training/Pretrain.py", script_text)
         self.assertIn('BASE_CONFIG="', script_text)
         self.assertIn('if (( ${#QWEN3_PRETRAIN_ARGS[@]} )); then', script_text)
+        self.assertIn('python -u src/training/Pretrain.py', script_text)
+        self.assertIn('| tee "${run_dir}/train.log"', script_text)
         self.assertNotIn('Usage:', script_text)
         self.assertNotIn('if [[ $#', script_text)
         self.assertNotIn("for hidden_size in", script_text)

@@ -58,7 +58,7 @@ for preset in "${PRESETS[@]}"; do
   python scripts/build_grid_config.py     --base "${BASE_CONFIG}"     --output "${config_path}"     --set model.hidden_size="${hidden_size}"     --set model.num_hidden_layers="${num_hidden_layers}"     --set model.num_attention_heads="${num_attention_heads}"     --set model.intermediate_size="${intermediate_size}"
 
   pretrain_cmd=(
-    python src/training/Pretrain.py
+    python -u src/training/Pretrain.py
     --data_file "${DATA_FILE}"
     --ntv3_embedding_path "${NTV3_EMBEDDING_PATH}"
     --config "${config_path}"
@@ -72,7 +72,7 @@ for preset in "${PRESETS[@]}"; do
   if (( ${#QWEN3_PRETRAIN_ARGS[@]} )); then
     pretrain_cmd+=("${QWEN3_PRETRAIN_ARGS[@]}")
   fi
-  "${pretrain_cmd[@]}" > "${run_dir}/train.log" 2>&1
+  "${pretrain_cmd[@]}" 2>&1 | tee "${run_dir}/train.log"
 
   python scripts/summarize_grid_results.py     --metrics_csv "${metrics_csv}"     --summary_csv "${SUMMARY_CSV}"     --run_name "${preset_name}"     --output_dir "${run_dir}"     --config_json "${config_path}"     --checkpoint_dir "${run_dir}/checkpoints"
 done

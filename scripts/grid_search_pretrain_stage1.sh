@@ -16,7 +16,7 @@ QWEN3_EMBEDDING_PATH="qwen3_embeddings/microbeatlas_keywords_emb.h5"
 BASE_CONFIG="src/configs/mgm2_default.json"
 OUTPUT_ROOT="outputs_grid/stage1"
 RUN_GROUP="$(date +%Y%m%d_%H%M%S)"
-MAX_EPOCHS=50
+MAX_EPOCHS=100
 BATCH_SIZE=32
 NUM_WORKERS=4
 DEVICES=(6 7)
@@ -79,7 +79,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           "${build_config_cmd[@]}"
 
           pretrain_cmd=(
-            python src/training/Pretrain.py
+            python -u src/training/Pretrain.py
             --data_file "${DATA_FILE}"
             --ntv3_embedding_path "${NTV3_EMBEDDING_PATH}"
             --config "${config_path}"
@@ -93,7 +93,7 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           if (( ${#QWEN3_PRETRAIN_ARGS[@]} )); then
             pretrain_cmd+=("${QWEN3_PRETRAIN_ARGS[@]}")
           fi
-          "${pretrain_cmd[@]}" > "${run_dir}/train.log" 2>&1
+          "${pretrain_cmd[@]}" 2>&1 | tee "${run_dir}/train.log"
 
           python scripts/summarize_grid_results.py             --metrics_csv "${metrics_csv}"             --summary_csv "${SUMMARY_CSV}"             --run_name "${run_name}"             --output_dir "${run_dir}"             --config_json "${config_path}"             --checkpoint_dir "${run_dir}/checkpoints"
         done
