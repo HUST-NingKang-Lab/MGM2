@@ -14,6 +14,7 @@ from pathlib import Path
 
 # Allow running the script from outside the repository root.
 project_root = Path(__file__).resolve().parents[2]
+default_config_path = project_root / 'src' / 'configs' / 'mgm2_default.json'
 sys.path.insert(0, str(project_root))
 
 import pytorch_lightning as pl
@@ -56,7 +57,7 @@ def parse_args():
 
     parser.add_argument('--data_file', type=Path, required=True, help='Path to preprocessed dataset (.pkl file)')
     parser.add_argument('--ntv3_embedding_path', type=Path, required=True, help='Path to NTv3 embeddings (.h5 file)')
-    parser.add_argument('--config', type=Path, default=None, help='Path to config file (JSON). If not provided, uses defaults')
+    parser.add_argument('--config', type=Path, default=None, help='Path to config file (JSON). If not provided, loads src/configs/mgm2_default.json')
     parser.add_argument('--max_epochs', type=int, default=50, help='Maximum number of epochs')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--learning_rate', type=float, default=None, help='Learning rate (overrides config)')
@@ -94,8 +95,9 @@ def create_config(args):
         config = MGM2Config.load(str(config_path))
         print(f'Loaded config from {config_path}')
     else:
-        config = MGM2Config()
-        print('Using default config')
+        config_path = _require_existing_path(default_config_path, 'default config')
+        config = MGM2Config.load(str(config_path))
+        print(f'Loaded default config from {config_path}')
 
     config.training.batch_size = args.batch_size
     config.training.max_epochs = args.max_epochs
@@ -129,6 +131,7 @@ def summarize_experiment_config(config: MGM2Config) -> str:
     lines = [
         f'Experiment: {config.experiment_name}',
         f'Output directory: {config.output_dir}',
+        f'seed: {config.seed}',
         f'binning_method: {config.abundance.binning_method}',
         f'regression_top_k_bins: {config.abundance.regression_top_k_bins}',
         f'qwen3_alignment: {qwen3_status}',
@@ -177,12 +180,14 @@ def main():
     Path(config.output_dir).mkdir(parents=True, exist_ok=True)
     config.save(Path(config.output_dir) / 'config.json')
 
+    pl.seed_everything(config.seed, workers=True)
+
     print('Creating data loaders...')
     train_loader, val_loader, test_loader = create_dataloaders_mgm2(
         data_path=config.data_path,
         ntv3_embedding_path=config.ntv3_embedding_path,
         abundance_bin_config=config.abundance.__dict__,
-        training_config={**config.training.__dict__, 'output_dir': config.output_dir},
+        training_config={**config.training.__dict__, 'output_dir': config.output_dir, 'seed': config.seed},
         qwen3_alignment_config=config.qwen3_alignment.__dict__,
         mask_prob=args.mask_prob,
         num_workers=args.num_workers,

@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
+from unittest.mock import patch
 
 import h5py
 import numpy as np
@@ -15,11 +16,12 @@ import torch
 
 from src.configs.Config import MGM2Config
 from src.data.build_dataset import MGM2DatasetBuilder
-from src.data.Dataset import BatchCollatorMGM2, MicrobiomeDatasetMGM2
+from src.data.Dataset import BatchCollatorMGM2, MicrobiomeDatasetMGM2, create_dataloaders_mgm2
 from src.data.Preprocessing import AbundancePreprocessor, BinManager
 from src.data.utils import load_ntv3_embeddings, load_preprocessed_data
 from src.losses.MultiTaskLoss import MGM2MultiTaskLoss
 from src.models import MGM2Model
+from src.models.BaseModel import BaseModel
 from src.training.TrainerModule import MGM2LightningModule
 
 
@@ -65,6 +67,23 @@ class MGM2RegressionTests(unittest.TestCase):
         manager = BinManager(num_bins=5, method="quantile")
         manager.fit(processed_train)
         return tmpdir, data, preprocessor, manager
+
+    def _create_preprocessed_dataset_file(self, path: Path, sample_count: int = 6):
+        payload = {
+            "samples": [f"sample_{i}" for i in range(sample_count)],
+            "otu_data": {},
+            "otu_id_to_idx": {"otu_a": 0, "otu_b": 1},
+            "format_version": "mgm2_v1",
+        }
+        for i in range(sample_count):
+            payload["otu_data"][f"sample_{i}"] = {
+                "input_ids": np.array([-1, 0, 1], dtype=np.int64),
+                "attention_mask": np.array([1, 1, 1], dtype=np.int64),
+                "abundance_values": np.array([0.0, 0.01 * (i + 1), 0.1], dtype=np.float32),
+            }
+
+        with open(path, "wb") as handle:
+            pickle.dump(payload, handle)
 
     def test_load_preprocessed_data_accepts_mgm2_schema(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -363,6 +382,87 @@ class MGM2RegressionTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             MGM2Config.from_dict({"loss": {"lambda_presence": 0.5}})
 
+    def test_dataset_reuses_embedding_cache_for_same_path(self):
+        tmpdir, data, preprocessor, manager = self._build_dataset_components()
+        try:
+            MicrobiomeDatasetMGM2.clear_runtime_caches()
+            with patch("h5py.File", wraps=h5py.File) as mocked_h5_file:
+                first = MicrobiomeDatasetMGM2(
+                    preprocessed_data=data,
+                    abundance_preprocessor=preprocessor,
+                    bin_manager=manager,
+                    is_training=False,
+                )
+                second = MicrobiomeDatasetMGM2(
+                    preprocessed_data=data,
+                    abundance_preprocessor=preprocessor,
+                    bin_manager=manager,
+                    is_training=False,
+                )
+
+            self.assertEqual(1, mocked_h5_file.call_count)
+            self.assertIs(first.ntv3_embeddings, second.ntv3_embeddings)
+        finally:
+            MicrobiomeDatasetMGM2.clear_runtime_caches()
+            tmpdir.cleanup()
+
+    def test_create_dataloaders_uses_deterministic_split_seed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            data_path = tmpdir / "dataset.pkl"
+            embedding_path = tmpdir / "embeddings.h5"
+            output_dir = tmpdir / "outputs"
+            self._create_preprocessed_dataset_file(data_path, sample_count=10)
+            self._create_embedding_file(embedding_path, ["otu_a", "otu_b"], embedding_dim=4)
+
+            abundance_cfg = MGM2Config().abundance.__dict__.copy()
+            training_cfg = {
+                "batch_size": 2,
+                "seed": 123,
+                "output_dir": str(output_dir),
+            }
+
+            loaders_a = create_dataloaders_mgm2(
+                data_path=str(data_path),
+                ntv3_embedding_path=str(embedding_path),
+                abundance_bin_config=abundance_cfg,
+                training_config=training_cfg,
+                num_workers=0,
+            )
+            loaders_b = create_dataloaders_mgm2(
+                data_path=str(data_path),
+                ntv3_embedding_path=str(embedding_path),
+                abundance_bin_config=abundance_cfg,
+                training_config=training_cfg,
+                num_workers=0,
+            )
+
+            self.assertEqual(loaders_a[0].dataset.data["samples"], loaders_b[0].dataset.data["samples"])
+            self.assertEqual(loaders_a[1].dataset.data["samples"], loaders_b[1].dataset.data["samples"])
+            self.assertEqual(loaders_a[2].dataset.data["samples"], loaders_b[2].dataset.data["samples"])
+
+    def test_create_dataloaders_skips_startup_abundance_transform_for_quantile_binning(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            data_path = tmpdir / "dataset.pkl"
+            embedding_path = tmpdir / "embeddings.h5"
+            output_dir = tmpdir / "outputs"
+            self._create_preprocessed_dataset_file(data_path, sample_count=6)
+            self._create_embedding_file(embedding_path, ["otu_a", "otu_b"], embedding_dim=4)
+
+            abundance_cfg = MGM2Config().abundance.__dict__.copy()
+            abundance_cfg["binning_method"] = "quantile"
+            abundance_cfg["normalize"] = False
+
+            with patch.object(AbundancePreprocessor, "transform", side_effect=AssertionError("startup should not transform the full training set")):
+                create_dataloaders_mgm2(
+                    data_path=str(data_path),
+                    ntv3_embedding_path=str(embedding_path),
+                    abundance_bin_config=abundance_cfg,
+                    training_config={"batch_size": 2, "seed": 42, "output_dir": str(output_dir)},
+                    num_workers=0,
+                )
+
     def test_default_config_uses_only_current_abundance_fields(self):
         config = MGM2Config.load("src/configs/mgm2_default.json")
 
@@ -431,6 +531,60 @@ class MGM2RegressionTests(unittest.TestCase):
 
             self.assertEqual((otu_count, 1), embeddings.shape)
             self.assertAlmostEqual(123.0, float(embeddings[123][0]))
+
+    def test_base_model_uses_film_modules_for_input_conditioning(self):
+        model = BaseModel(embedding_dim=4, hidden_size=8, num_hidden_layers=1, num_attention_heads=2)
+        model.eval()
+
+        self.assertTrue(hasattr(model, "embedding_projection"))
+        self.assertTrue(hasattr(model, "abundance_conditioner"))
+        self.assertFalse(hasattr(model, "input_projection"))
+
+    def test_base_model_non_cls_hidden_states_change_with_abundance(self):
+        torch.manual_seed(0)
+        model = BaseModel(embedding_dim=4, hidden_size=8, num_hidden_layers=1, num_attention_heads=2)
+        model.eval()
+        embeddings = torch.ones(1, 2, 4)
+        input_ids = torch.tensor([[-1, 0]])
+        attention_mask = torch.tensor([[1, 1]])
+
+        low = model(
+            input_ids=input_ids,
+            embeddings=embeddings,
+            abundance_values=torch.tensor([[0.0, -2.0]]),
+            attention_mask=attention_mask,
+        )["last_hidden_state"]
+        high = model(
+            input_ids=input_ids,
+            embeddings=embeddings,
+            abundance_values=torch.tensor([[0.0, 2.0]]),
+            attention_mask=attention_mask,
+        )["last_hidden_state"]
+
+        self.assertFalse(torch.allclose(low[:, 1, :], high[:, 1, :]))
+
+    def test_base_model_cls_token_is_not_conditioned_on_abundance(self):
+        torch.manual_seed(0)
+        model = BaseModel(embedding_dim=4, hidden_size=8, num_hidden_layers=1, num_attention_heads=2)
+        model.eval()
+        embeddings = torch.randn(1, 1, 4)
+        input_ids = torch.tensor([[-1]])
+        attention_mask = torch.tensor([[1]])
+
+        low = model(
+            input_ids=input_ids,
+            embeddings=embeddings,
+            abundance_values=torch.tensor([[0.0]]),
+            attention_mask=attention_mask,
+        )["last_hidden_state"]
+        high = model(
+            input_ids=input_ids,
+            embeddings=embeddings,
+            abundance_values=torch.tensor([[1.0]]),
+            attention_mask=attention_mask,
+        )["last_hidden_state"]
+
+        self.assertTrue(torch.allclose(low[:, 0, :], high[:, 0, :]))
 
     def test_model_and_loss_use_only_bin_and_regression(self):
         config = MGM2Config()
@@ -656,6 +810,35 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, msg=result.stderr)
         self.assertIn("--qwen3_embedding_path", help_text)
         self.assertNotIn("--qwen3_embedding ", help_text)
+
+    def test_create_config_uses_repo_default_json_when_config_is_omitted(self):
+        train_module = importlib.import_module("src.training.Train")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            data_path = tmpdir / "dataset.pkl"
+            ntv3_path = tmpdir / "ntv3.h5"
+            data_path.write_bytes(b"placeholder")
+            ntv3_path.write_bytes(b"placeholder")
+
+            args = SimpleNamespace(
+                config=None,
+                max_epochs=1,
+                batch_size=2,
+                devices=[0],
+                ntv3_embedding_path=str(ntv3_path),
+                data_file=str(data_path),
+                output_dir=str(tmpdir / "outputs"),
+                experiment_name="test_run",
+                learning_rate=None,
+                qwen3_embedding_path=None,
+                enable_qwen3_alignment=False,
+                resume=None,
+            )
+
+            config = train_module.create_config(args)
+
+            self.assertEqual(4096, config.qwen3_alignment.projection_dim)
 
     def test_create_config_fails_when_qwen3_enabled_without_existing_path(self):
         train_module = importlib.import_module("src.training.Train")

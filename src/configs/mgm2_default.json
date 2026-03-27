@@ -6,17 +6,16 @@
     "normalize": false,
     "num_bins": 5,
     "binning_method": "quantile",
-    "fixed_thresholds": [0.0, 0.0001, 0.001, 0.01, 0.1],
     "enable_regression": true,
-    "regression_top_k_bins": 1
+    "regression_top_k_bins": 2
   },
   "model": {
     "vocab_size": 10000,
     "embedding_dim": 1536,
-    "hidden_size": 512,
-    "num_hidden_layers": 12,
-    "num_attention_heads": 8,
-    "intermediate_size": 2048,
+    "hidden_size": 128,
+    "num_hidden_layers": 4,
+    "num_attention_heads": 4,
+    "intermediate_size": 512,
     "hidden_dropout_prob": 0.1,
     "attention_probs_dropout_prob": 0.1,
     "layer_norm_eps": 1e-12,
@@ -28,7 +27,7 @@
   "loss": {
     "lambda_bin": 1.0,
     "lambda_regression": 0.3,
-    "bin_loss_type": "cross_entropy",
+    "bin_loss_type": "focal",
     "regression_loss_type": "mse",
     "focal_alpha": 0.25,
     "focal_gamma": 2.0
@@ -50,7 +49,7 @@
   "qwen3_alignment": {
     "enabled": false,
     "embedding_path": "",
-    "projection_dim": 1536,
+    "projection_dim": 4096,
     "temperature": 0.07,
     "loss_weight": 0.1
   },

@@ -16,7 +16,7 @@ class AbundanceConfig:
     binning_method: str = 'quantile'
     fixed_thresholds: List[float] = field(default_factory=lambda: [0.0, 1e-4, 1e-3, 1e-2, 1e-1])
     enable_regression: bool = True
-    regression_top_k_bins: int = 1
+    regression_top_k_bins: int = 2
 
     def __post_init__(self):
         if self.min_abundance <= 0:
@@ -98,7 +98,7 @@ class TrainingConfig:
 class Qwen3AlignmentConfig:
     enabled: bool = False
     embedding_path: str = ''
-    projection_dim: int = 1536
+    projection_dim: int = 4096
     temperature: float = 0.07
     loss_weight: float = 0.1
 

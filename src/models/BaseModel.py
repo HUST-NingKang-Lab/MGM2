@@ -43,10 +43,15 @@ class BaseModel(nn.Module):
         self.output_hidden_states = output_hidden_states
         self.output_attentions = output_attentions
 
-        # 将未mask的NTv3 embedding和丰度值映射到隐藏层
-        self.input_projection = nn.Linear(embedding_dim + 1, hidden_size)
+        # Project OTU identity into hidden space, then modulate it with FiLM from abundance.
+        self.embedding_projection = nn.Linear(embedding_dim, hidden_size)
+        self.abundance_conditioner = nn.Sequential(
+            nn.Linear(1, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, hidden_size * 2),
+        )
 
-        # 针对CLS token的独立可学习Embedding (不使用Linear映射丰度)
+        # 针对CLS token的独立可学习Embedding (不使用丰度条件化)
         self.cls_embedding = nn.Embedding(1, hidden_size)
 
         # Layer Norm
@@ -85,11 +90,11 @@ class BaseModel(nn.Module):
 
     def get_input_embeddings(self):
         """获取输入embeddings（用于微调时更新）"""
-        return self.input_projection
+        return self.embedding_projection
 
     def set_input_embeddings(self, value):
         """设置输入embeddings"""
-        self.input_projection = value
+        self.embedding_projection = value
 
     def forward(
         self,
@@ -122,12 +127,12 @@ class BaseModel(nn.Module):
 
         device = embeddings.device
 
-        # 组合未被mask的常规特征：NTv3 embedding + 真实丰度值
+        # Project OTU identity, then let abundance condition it through FiLM.
+        base_hidden = self.embedding_projection(embeddings)
         abundances_expanded = abundance_values.unsqueeze(-1)  # [batch_size, seq_len, 1]
-        normal_inputs = torch.cat([embeddings, abundances_expanded], dim=-1)
-
-        # 使用基础Linear进行投影
-        hidden_states = self.input_projection(normal_inputs)
+        film_params = self.abundance_conditioner(abundances_expanded)
+        gamma, beta = film_params.chunk(2, dim=-1)
+        hidden_states = base_hidden * (1.0 + gamma) + beta
 
         # 替换 CLS token 的特征
         cls_positions = (input_ids == self.cls_token_id)
