@@ -10,7 +10,7 @@ set -euo pipefail
 # Example:
 #   bash scripts/grid_search_pretrain_stage1.sh
 
-DATA_FILE="data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.ct.mgm2v1.pkl"
+DATA_FILE="data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.mgm2v1.pkl"
 NTV3_EMBEDDING_PATH="ntv3_embeddings/otus_99_embeddings.h5"
 QWEN3_EMBEDDING_PATH="qwen3_embeddings/microbeatlas_keywords_emb.h5"
 BASE_CONFIG="src/configs/mgm2_default.json"
@@ -63,9 +63,37 @@ for learning_rate in "${LEARNING_RATES[@]}"; do
           metrics_csv="${run_dir}/logs/${run_name}/version_0/metrics.csv"
 
           mkdir -p "${run_dir}"
-          python scripts/build_grid_config.py             --base "${BASE_CONFIG}"             --output "${config_path}"             --set training.learning_rate="${learning_rate}"             --set training.weight_decay="${weight_decay}"             --set training.mask_prob="${mask_prob}"             --set loss.lambda_regression="${lambda_regression}"             --set qwen3_alignment.loss_weight="${qwen3_loss_weight}"             "${QWEN3_CONFIG_OVERRIDES[@]}"
+          build_config_cmd=(
+            python scripts/build_grid_config.py
+            --base "${BASE_CONFIG}"
+            --output "${config_path}"
+            --set training.learning_rate="${learning_rate}"
+            --set training.weight_decay="${weight_decay}"
+            --set training.mask_prob="${mask_prob}"
+            --set loss.lambda_regression="${lambda_regression}"
+            --set qwen3_alignment.loss_weight="${qwen3_loss_weight}"
+          )
+          if (( ${#QWEN3_CONFIG_OVERRIDES[@]} )); then
+            build_config_cmd+=("${QWEN3_CONFIG_OVERRIDES[@]}")
+          fi
+          "${build_config_cmd[@]}"
 
-          python src/training/Pretrain.py             --data_file "${DATA_FILE}"             --ntv3_embedding_path "${NTV3_EMBEDDING_PATH}"             --config "${config_path}"             --max_epochs "${MAX_EPOCHS}"             --batch_size "${BATCH_SIZE}"             --num_workers "${NUM_WORKERS}"             --output_dir "${run_dir}"             --experiment_name "${run_name}"             --devices "${DEVICES[@]}"             "${QWEN3_PRETRAIN_ARGS[@]}"             > "${run_dir}/train.log" 2>&1
+          pretrain_cmd=(
+            python src/training/Pretrain.py
+            --data_file "${DATA_FILE}"
+            --ntv3_embedding_path "${NTV3_EMBEDDING_PATH}"
+            --config "${config_path}"
+            --max_epochs "${MAX_EPOCHS}"
+            --batch_size "${BATCH_SIZE}"
+            --num_workers "${NUM_WORKERS}"
+            --output_dir "${run_dir}"
+            --experiment_name "${run_name}"
+            --devices "${DEVICES[@]}"
+          )
+          if (( ${#QWEN3_PRETRAIN_ARGS[@]} )); then
+            pretrain_cmd+=("${QWEN3_PRETRAIN_ARGS[@]}")
+          fi
+          "${pretrain_cmd[@]}" > "${run_dir}/train.log" 2>&1
 
           python scripts/summarize_grid_results.py             --metrics_csv "${metrics_csv}"             --summary_csv "${SUMMARY_CSV}"             --run_name "${run_name}"             --output_dir "${run_dir}"             --config_json "${config_path}"             --checkpoint_dir "${run_dir}/checkpoints"
         done

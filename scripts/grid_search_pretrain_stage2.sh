@@ -9,7 +9,7 @@ set -euo pipefail
 #   bash scripts/grid_search_pretrain_stage2.sh
 
 BASE_CONFIG="outputs_grid/stage1/REPLACE_WITH_BEST_RUN/config.json"
-DATA_FILE="data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.ct.mgm2v1.pkl"
+DATA_FILE="data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.mgm2v1.pkl"
 NTV3_EMBEDDING_PATH="ntv3_embeddings/otus_99_embeddings.h5"
 QWEN3_EMBEDDING_PATH="qwen3_embeddings/microbeatlas_keywords_emb.h5"
 OUTPUT_ROOT="outputs_grid/stage2"
@@ -57,7 +57,22 @@ for preset in "${PRESETS[@]}"; do
   mkdir -p "${run_dir}"
   python scripts/build_grid_config.py     --base "${BASE_CONFIG}"     --output "${config_path}"     --set model.hidden_size="${hidden_size}"     --set model.num_hidden_layers="${num_hidden_layers}"     --set model.num_attention_heads="${num_attention_heads}"     --set model.intermediate_size="${intermediate_size}"
 
-  python src/training/Pretrain.py     --data_file "${DATA_FILE}"     --ntv3_embedding_path "${NTV3_EMBEDDING_PATH}"     --config "${config_path}"     --max_epochs "${MAX_EPOCHS}"     --batch_size "${BATCH_SIZE}"     --num_workers "${NUM_WORKERS}"     --output_dir "${run_dir}"     --experiment_name "${run_name}"     --devices "${DEVICES[@]}"     "${QWEN3_PRETRAIN_ARGS[@]}"     > "${run_dir}/train.log" 2>&1
+  pretrain_cmd=(
+    python src/training/Pretrain.py
+    --data_file "${DATA_FILE}"
+    --ntv3_embedding_path "${NTV3_EMBEDDING_PATH}"
+    --config "${config_path}"
+    --max_epochs "${MAX_EPOCHS}"
+    --batch_size "${BATCH_SIZE}"
+    --num_workers "${NUM_WORKERS}"
+    --output_dir "${run_dir}"
+    --experiment_name "${run_name}"
+    --devices "${DEVICES[@]}"
+  )
+  if (( ${#QWEN3_PRETRAIN_ARGS[@]} )); then
+    pretrain_cmd+=("${QWEN3_PRETRAIN_ARGS[@]}")
+  fi
+  "${pretrain_cmd[@]}" > "${run_dir}/train.log" 2>&1
 
   python scripts/summarize_grid_results.py     --metrics_csv "${metrics_csv}"     --summary_csv "${SUMMARY_CSV}"     --run_name "${preset_name}"     --output_dir "${run_dir}"     --config_json "${config_path}"     --checkpoint_dir "${run_dir}/checkpoints"
 done
