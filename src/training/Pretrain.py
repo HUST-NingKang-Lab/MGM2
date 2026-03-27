@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-MGM2 dual-task training entry point with optional Qwen3 contrastive alignment.
+MGM2 dual-task pretraining entry point with optional Qwen3 contrastive alignment.
 
 Example:
-    python src/training/Train.py         --data_file data/pretrain_dataset.pkl         --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5         --config src/configs/mgm2_default.json
+    python src/training/Pretrain.py         --data_file data/pretrain_dataset.pkl         --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5         --config src/configs/mgm2_default.json
 
-    python src/training/Train.py         --data_file data/pretrain_dataset.pkl         --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5         --enable_qwen3_alignment         --qwen3_embedding_path qwen3_embeddings/microbeatlas_keywords_emb.h5
+    python src/training/Pretrain.py         --data_file data/pretrain_dataset.pkl         --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5         --enable_qwen3_alignment         --qwen3_embedding_path qwen3_embeddings/microbeatlas_keywords_emb.h5
 """
 
 import argparse
@@ -41,14 +41,14 @@ def _require_existing_path(path_value, argument_name: str) -> Path:
 
 
 def parse_args():
-    """Parse command line arguments for training."""
+    """Parse command line arguments for pretraining."""
     parser = argparse.ArgumentParser(
-        description='Train the MGM2 dual-task masked abundance model with optional Qwen3 contrastive alignment',
+        description='Pretrain the MGM2 dual-task masked abundance model with optional Qwen3 contrastive alignment',
         epilog=(
             'Example:\n'
-            '  python src/training/Train.py --data_file data/pretrain_dataset.pkl '
+            '  python src/training/Pretrain.py --data_file data/pretrain_dataset.pkl '
             '--ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5 --config src/configs/mgm2_default.json\n'
-            '  python src/training/Train.py --data_file data/pretrain_dataset.pkl '
+            '  python src/training/Pretrain.py --data_file data/pretrain_dataset.pkl '
             '--ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5 '
             '--enable_qwen3_alignment --qwen3_embedding_path qwen3_embeddings/microbeatlas_keywords_emb.h5'
         ),
@@ -69,7 +69,7 @@ def parse_args():
         default=None,
         help='Optional path to Qwen3 keyword embeddings (.h5) for sample-level contrastive alignment',
     )
-    parser.add_argument('--enable_qwen3_alignment', action='store_true', help='Enable optional CLS-to-Qwen3 contrastive alignment during training')
+    parser.add_argument('--enable_qwen3_alignment', action='store_true', help='Enable optional CLS-to-Qwen3 contrastive alignment during pretraining')
     parser.add_argument('--output_dir', type=Path, default=Path('./outputs_mgm2'), help='Output directory')
     parser.add_argument('--experiment_name', type=str, default='mgm2_experiment', help='Experiment name')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of data loading workers')
@@ -122,6 +122,12 @@ def create_config(args):
             raise FileNotFoundError('Qwen3 alignment is enabled but --qwen3_embedding_path was not provided')
         _require_existing_path(config.qwen3_alignment.embedding_path, '--qwen3_embedding_path')
 
+    if not torch.isclose(
+        torch.tensor(config.training.train_ratio + config.training.val_ratio, dtype=torch.float32),
+        torch.tensor(1.0, dtype=torch.float32),
+    ):
+        raise ValueError('Pretraining requires training.train_ratio + training.val_ratio == 1.0')
+
     return config
 
 
@@ -133,6 +139,8 @@ def summarize_experiment_config(config: MGM2Config) -> str:
         f'Output directory: {config.output_dir}',
         f'seed: {config.seed}',
         f'binning_method: {config.abundance.binning_method}',
+        f'train_ratio: {config.training.train_ratio}',
+        f'val_ratio: {config.training.val_ratio}',
         f'regression_top_k_bins: {config.abundance.regression_top_k_bins}',
         f'qwen3_alignment: {qwen3_status}',
     ]
@@ -170,7 +178,7 @@ def create_callbacks(config):
 
 
 def main():
-    """Main training function."""
+    """Main pretraining function."""
     args = parse_args()
     config = create_config(args)
     print()
@@ -183,7 +191,7 @@ def main():
     pl.seed_everything(config.seed, workers=True)
 
     print('Creating data loaders...')
-    train_loader, val_loader, test_loader = create_dataloaders_mgm2(
+    train_loader, val_loader = create_dataloaders_mgm2(
         data_path=config.data_path,
         ntv3_embedding_path=config.ntv3_embedding_path,
         abundance_bin_config=config.abundance.__dict__,
@@ -191,11 +199,13 @@ def main():
         qwen3_alignment_config=config.qwen3_alignment.__dict__,
         mask_prob=args.mask_prob,
         num_workers=args.num_workers,
+        train_ratio=config.training.train_ratio,
+        val_ratio=config.training.val_ratio,
+        include_test_loader=False,
     )
 
     print(f'Train batches: {len(train_loader)}')
     print(f'Val batches: {len(val_loader)}')
-    print(f'Test batches: {len(test_loader)}')
 
     print('\nInitializing model...')
     lightning_module = MGM2LightningModule(config=config)
@@ -229,10 +239,8 @@ def main():
     print('\nStarting training...')
     trainer.fit(lightning_module, train_loader, val_loader, ckpt_path=str(args.resume) if args.resume else None)
 
-    print('\nRunning test evaluation...')
-    trainer.test(lightning_module, test_loader, ckpt_path='best')
 
-    print(f'\nTraining complete. Results saved to {config.output_dir}')
+    print(f'\nPretraining complete. Results saved to {config.output_dir}')
 
 
 if __name__ == '__main__':

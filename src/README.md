@@ -32,7 +32,7 @@ src/
 │   └── Model.py
 ├── training/
 │   ├── TrainerModule.py
-│   └── Train.py
+│   └── Pretrain.py
 └── __init__.py
 ```
 
@@ -44,16 +44,16 @@ src/
 python src/data/build_dataset.py   --otu_table data/otu_table.csv   --format csv   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --output data/pretrain_dataset.pkl
 ```
 
-### 训练
+### 预训练
 
 ```bash
-python src/training/Train.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --config src/configs/mgm2_default.json
+python src/training/Pretrain.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --config src/configs/mgm2_default.json
 ```
 
 ### 启用 Qwen3 对齐
 
 ```bash
-python src/training/Train.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --enable_qwen3_alignment   --qwen3_embedding_path qwen3_embeddings/microbeatlas_keywords_emb.h5
+python src/training/Pretrain.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --enable_qwen3_alignment   --qwen3_embedding_path qwen3_embeddings/microbeatlas_keywords_emb.h5
 ```
 
 ## 配置说明
@@ -81,6 +81,7 @@ python src/training/Train.py   --data_file data/pretrain_dataset.pkl   --ntv3_em
 - `mask_prob`：监督 mask 概率
 - `mask_ratio`：`(mask, random, keep)` abundance 腐蚀比例
 - `batch_size` / `num_workers`
+- `train_ratio` / `val_ratio`：预训练的 train/val 切分比例，要求和为 1
 - `learning_rate` / `weight_decay`
 - `warmup_steps` / `max_epochs`
 - `devices` / `accelerator` / `precision`

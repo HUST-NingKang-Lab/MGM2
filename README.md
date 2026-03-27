@@ -26,7 +26,7 @@ MGM2/
 │   ├── data/                    # Dataset building, preprocessing, dataloaders
 │   ├── losses/                  # Multi-task loss definitions
 │   ├── models/                  # Backbone and prediction heads
-│   ├── training/                # Lightning module and training entrypoint
+│   ├── training/                # Lightning module and pretraining entrypoint
 │   ├── README.md
 │   └── README_ANALYSIS.md
 ├── tests/                       # Regression tests for the active codepath
@@ -64,17 +64,19 @@ From a BIOM OTU table:
 python src/data/build_dataset.py   --otu_table data/otu_table.biom   --format biom   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --output data/pretrain_dataset.pkl
 ```
 
-### 2. Train the default dual-task model
+### 2. Pretrain the default dual-task model
 
 ```bash
-python src/training/Train.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --config src/configs/mgm2_default.json
+python src/training/Pretrain.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --config src/configs/mgm2_default.json
 ```
 
-### 3. Enable optional Qwen3 alignment
+### 3. Enable optional Qwen3 alignment during pretraining
 
 ```bash
-python src/training/Train.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --enable_qwen3_alignment   --qwen3_embedding_path qwen3_embeddings/microbeatlas_keywords_emb.h5
+python src/training/Pretrain.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --enable_qwen3_alignment   --qwen3_embedding_path qwen3_embeddings/microbeatlas_keywords_emb.h5
 ```
+
+Pretraining runs use train/validation splits and do not run an automatic test-set evaluation.
 
 ## Core Configuration
 
@@ -84,6 +86,7 @@ Important abundance-related settings:
 
 - `binning_method`: `quantile` or `fixed_threshold`
 - `regression_top_k_bins`: how many highest bins participate in regression supervision
+- `train_ratio` / `val_ratio`: pretraining split ratios that should sum to 1.0
 - `num_bins`: number of abundance bins
 - `min_abundance`, `output_min`, `output_max`: log-abundance preprocessing controls
 

@@ -1,4 +1,6 @@
 import importlib
+import importlib.util
+import json
 import os
 import pickle
 import random
@@ -441,6 +443,48 @@ class MGM2RegressionTests(unittest.TestCase):
             self.assertEqual(loaders_a[1].dataset.data["samples"], loaders_b[1].dataset.data["samples"])
             self.assertEqual(loaders_a[2].dataset.data["samples"], loaders_b[2].dataset.data["samples"])
 
+    def test_create_dataloaders_can_skip_test_loader_for_pretraining(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            data_path = tmpdir / "dataset.pkl"
+            embedding_path = tmpdir / "embeddings.h5"
+            output_dir = tmpdir / "outputs"
+
+            self._create_preprocessed_dataset_file(data_path, sample_count=6)
+            self._create_embedding_file(embedding_path, ["otu_a", "otu_b"])
+
+            loaders = create_dataloaders_mgm2(
+                data_path=str(data_path),
+                ntv3_embedding_path=str(embedding_path),
+                abundance_bin_config={
+                    "min_abundance": 1e-4,
+                    "output_min": -2.0,
+                    "output_max": 2.0,
+                    "normalize": False,
+                    "num_bins": 5,
+                    "binning_method": "quantile",
+                    "fixed_thresholds": [0.0, 0.25, 0.5, 0.75, 1.0],
+                    "enable_regression": True,
+                    "regression_top_k_bins": 2,
+                },
+                training_config={
+                    "batch_size": 2,
+                    "output_dir": str(output_dir),
+                    "seed": 7,
+                },
+                mask_prob=0.15,
+                num_workers=0,
+                train_ratio=0.8,
+                val_ratio=0.2,
+                include_test_loader=False,
+            )
+
+            self.assertEqual(2, len(loaders))
+            train_loader, val_loader = loaders
+            self.assertEqual(4, len(train_loader.dataset))
+            self.assertEqual(2, len(val_loader.dataset))
+            self.assertEqual(6, len(train_loader.dataset) + len(val_loader.dataset))
+
     def test_create_dataloaders_skips_startup_abundance_transform_for_quantile_binning(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
@@ -481,6 +525,13 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertTrue(hasattr(config, "qwen3_alignment"))
         self.assertFalse(config.qwen3_alignment.enabled)
         self.assertEqual("", config.qwen3_alignment.embedding_path)
+
+    def test_default_config_uses_full_train_val_split_for_pretraining(self):
+        config = MGM2Config.load("src/configs/mgm2_default.json")
+
+        self.assertAlmostEqual(0.9, config.training.train_ratio)
+        self.assertAlmostEqual(0.1, config.training.val_ratio)
+        self.assertAlmostEqual(1.0, config.training.train_ratio + config.training.val_ratio)
 
 
     def test_builder_uses_relative_abundance_for_csv(self):
@@ -781,8 +832,20 @@ class MGM2RegressionTests(unittest.TestCase):
 
         self.assertIs(root_pkg.MGM2Config, MGM2Config)
 
-    def test_train_script_summary_mentions_binning_and_regression_top_k(self):
-        train_module = importlib.import_module("src.training.Train")
+    def test_pretrain_entrypoint_replaces_train_script(self):
+        repo_root = Path(__file__).resolve().parents[1]
+
+        self.assertTrue((repo_root / "src" / "training" / "Pretrain.py").exists())
+        self.assertFalse((repo_root / "src" / "training" / "Train.py").exists())
+
+    def test_pretrain_entrypoint_does_not_run_test_evaluation(self):
+        pretrain_path = Path(__file__).resolve().parents[1] / "src" / "training" / "Pretrain.py"
+        pretrain_source = pretrain_path.read_text()
+
+        self.assertNotIn("trainer.test(", pretrain_source)
+
+    def test_pretrain_script_summary_mentions_binning_and_regression_top_k(self):
+        train_module = importlib.import_module("src.training.Pretrain")
         config = MGM2Config()
         config.abundance.binning_method = "quantile"
         config.abundance.regression_top_k_bins = 2
@@ -794,8 +857,8 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertIn("regression_top_k_bins: 2", summary)
         self.assertIn("qwen3_alignment: enabled", summary)
 
-    def test_train_script_help_uses_qwen3_embedding_path_flag(self):
-        script_path = Path(__file__).resolve().parents[1] / "src" / "training" / "Train.py"
+    def test_pretrain_script_help_uses_qwen3_embedding_path_flag(self):
+        script_path = Path(__file__).resolve().parents[1] / "src" / "training" / "Pretrain.py"
         env = os.environ.copy()
         env["MKL_SERVICE_FORCE_INTEL"] = "1"
         result = subprocess.run(
@@ -810,9 +873,10 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, msg=result.stderr)
         self.assertIn("--qwen3_embedding_path", help_text)
         self.assertNotIn("--qwen3_embedding ", help_text)
+        self.assertIn("src/training/Pretrain.py", help_text)
 
     def test_create_config_uses_repo_default_json_when_config_is_omitted(self):
-        train_module = importlib.import_module("src.training.Train")
+        train_module = importlib.import_module("src.training.Pretrain")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
@@ -841,7 +905,7 @@ class MGM2RegressionTests(unittest.TestCase):
             self.assertEqual(4096, config.qwen3_alignment.projection_dim)
 
     def test_create_config_fails_when_qwen3_enabled_without_existing_path(self):
-        train_module = importlib.import_module("src.training.Train")
+        train_module = importlib.import_module("src.training.Pretrain")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
@@ -867,8 +931,8 @@ class MGM2RegressionTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 train_module.create_config(args)
 
-    def test_train_script_runs_from_outside_repo(self):
-        script_path = Path(__file__).resolve().parents[1] / "src" / "training" / "Train.py"
+    def test_pretrain_script_runs_from_outside_repo(self):
+        script_path = Path(__file__).resolve().parents[1] / "src" / "training" / "Pretrain.py"
         env = os.environ.copy()
         env["MKL_SERVICE_FORCE_INTEL"] = "1"
         result = subprocess.run(
@@ -885,6 +949,100 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertIn("qwen3", help_text)
         self.assertIn("contrastive", help_text)
         self.assertNotIn("hierarchical multi-task", help_text)
+
+
+    def test_readme_examples_use_pretrain_entrypoint(self):
+        readme_text = Path(__file__).resolve().parents[1].joinpath("README.md").read_text()
+        src_readme_text = Path(__file__).resolve().parents[1].joinpath("src", "README.md").read_text()
+
+        self.assertIn("src/training/Pretrain.py", readme_text)
+        self.assertNotIn("src/training/Train.py", readme_text)
+        self.assertIn("src/training/Pretrain.py", src_readme_text)
+        self.assertNotIn("src/training/Train.py", src_readme_text)
+
+    def test_repository_guide_uses_pretrain_entrypoint(self):
+        guide_text = Path(__file__).resolve().parents[1].joinpath("docs", "repository_guide_zh.md").read_text()
+
+        self.assertIn("src/training/Pretrain.py", guide_text)
+        self.assertNotIn("src/training/Train.py", guide_text)
+        self.assertIn("不跑测试集", guide_text)
+
+    def test_stage1_grid_script_exists_and_uses_pretrain_entrypoint(self):
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "grid_search_pretrain_stage1.sh"
+        script_text = script_path.read_text()
+
+        self.assertTrue(script_path.exists())
+        self.assertIn("src/training/Pretrain.py", script_text)
+        self.assertIn("outputs_grid/stage1", script_text)
+        self.assertIn("val/bin_accuracy", script_text)
+        self.assertIn("val/regression_mse", script_text)
+        self.assertIn('DATA_FILE="', script_text)
+        self.assertNotIn('Usage:', script_text)
+        self.assertNotIn('if [[ $#', script_text)
+
+    def test_stage2_grid_script_uses_curated_scaling_presets(self):
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "grid_search_pretrain_stage2.sh"
+        script_text = script_path.read_text()
+
+        self.assertTrue(script_path.exists())
+        self.assertIn("scale_small", script_text)
+        self.assertIn("scale_large", script_text)
+        self.assertIn("src/training/Pretrain.py", script_text)
+        self.assertIn('BASE_CONFIG="', script_text)
+        self.assertNotIn('Usage:', script_text)
+        self.assertNotIn('if [[ $#', script_text)
+        self.assertNotIn("for hidden_size in", script_text)
+        self.assertNotIn("for num_hidden_layers in", script_text)
+        self.assertNotIn("for num_attention_heads in", script_text)
+
+    def test_grid_config_builder_applies_nested_overrides(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "build_grid_config.py"
+        spec = importlib.util.spec_from_file_location("build_grid_config", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        config = {
+            "training": {"learning_rate": 1e-4, "weight_decay": 0.01},
+            "loss": {"lambda_regression": 0.3},
+            "qwen3_alignment": {"loss_weight": 0.1},
+        }
+        updated = module.apply_overrides(
+            config,
+            {
+                "training.learning_rate": 5e-5,
+                "loss.lambda_regression": 0.5,
+                "qwen3_alignment.loss_weight": 0.2,
+            },
+        )
+
+        self.assertEqual(5e-5, updated["training"]["learning_rate"])
+        self.assertEqual(0.5, updated["loss"]["lambda_regression"])
+        self.assertEqual(0.2, updated["qwen3_alignment"]["loss_weight"])
+        self.assertEqual(1e-4, config["training"]["learning_rate"])
+
+    def test_stage1_grid_summary_helper_records_primary_and_secondary_metrics(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "summarize_grid_results.py"
+        spec = importlib.util.spec_from_file_location("summarize_grid_results", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            metrics_dir = tmpdir / "logs" / "demo" / "version_0"
+            metrics_dir.mkdir(parents=True)
+            metrics_path = metrics_dir / "metrics.csv"
+            metrics_path.write_text(
+                "epoch,val/total_loss,val/bin_accuracy,val/regression_mse\n"
+                "0,1.20,0.40,0.30\n"
+                "1,0.90,0.55,0.25\n"
+                "2,1.10,0.60,0.35\n"
+            )
+
+            summary = module.extract_best_metrics(metrics_path)
+
+        self.assertEqual(0.90, summary["best_val_total_loss"])
+        self.assertEqual(0.55, summary["best_val_bin_accuracy"])
+        self.assertEqual(0.25, summary["best_val_regression_mse"])
 
 
 if __name__ == "__main__":

@@ -76,6 +76,8 @@ class LossConfig:
 class TrainingConfig:
     mask_prob: float = 0.15
     mask_ratio: Tuple[float, float, float] = (0.8, 0.1, 0.1)
+    train_ratio: float = 0.9
+    val_ratio: float = 0.1
     batch_size: int = 32
     num_workers: int = 4
     learning_rate: float = 1e-4
@@ -92,6 +94,12 @@ class TrainingConfig:
             raise ValueError('mask_prob must be between 0 and 1')
         if len(self.mask_ratio) != 3:
             raise ValueError('mask_ratio must contain exactly three values: (mask, random, keep)')
+        if not 0.0 < self.train_ratio < 1.0:
+            raise ValueError('train_ratio must be between 0 and 1')
+        if not 0.0 < self.val_ratio < 1.0:
+            raise ValueError('val_ratio must be between 0 and 1')
+        if self.train_ratio + self.val_ratio > 1.0:
+            raise ValueError('train_ratio + val_ratio must be less than or equal to 1.0')
 
 
 @dataclass

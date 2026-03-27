@@ -182,23 +182,25 @@ OTU embedding + abundance value
 - 负样本：同一 batch 内其他有效样本
 - 若 batch 内有效对齐样本少于 2 条，则该 loss 记为 0
 
-## 8. 训练入口
+## 8. 预训练入口
 
-核心脚本： [Train.py](/data6/zhanghaohong/projects/MWorld/MGM2/src/training/Train.py)
+核心脚本： [Pretrain.py](/data6/zhanghaohong/projects/MWorld/MGM2/src/training/Pretrain.py)
 
 基础训练示例：
 
 ```bash
-python src/training/Train.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --config src/configs/mgm2_default.json
+python src/training/Pretrain.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --config src/configs/mgm2_default.json
 ```
 
 启用 `Qwen3` 对齐：
 
 ```bash
-python src/training/Train.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --enable_qwen3_alignment   --qwen3_embedding_path qwen3_embeddings/microbeatlas_keywords_emb.h5
+python src/training/Pretrain.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --enable_qwen3_alignment   --qwen3_embedding_path qwen3_embeddings/microbeatlas_keywords_emb.h5
 ```
 
-`Train.py` 现在已经补了几类 fail-fast：
+预训练流程只使用 train/val 切分，不跑测试集。
+
+`Pretrain.py` 现在已经补了几类 fail-fast：
 
 - `data_file` 不存在直接失败
 - `ntv3_embedding_path` 不存在直接失败
