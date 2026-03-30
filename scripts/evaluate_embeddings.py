@@ -32,7 +32,7 @@ def parse_args():
         ),
     )
     parser.add_argument('--checkpoint', type=Path, required=True, help='Lightning checkpoint to evaluate')
-    parser.add_argument('--config', type=Path, default=None, help='Optional config JSON. Defaults to sibling run config.json')
+    parser.add_argument('--config', type=Path, default=None, help='Optional config JSON. Defaults to the nearest config.json found above the checkpoint path')
     parser.add_argument('--data_file', type=Path, required=True, help='Preprocessed dataset (.pkl)')
     parser.add_argument('--ntv3_embedding_path', type=Path, required=True, help='NTv3 embeddings (.h5)')
     parser.add_argument('--metadata_file', type=Path, required=True, help='Metadata TSV/CSV with sample labels')
@@ -91,11 +91,20 @@ def sample_metadata_balanced(
 
 def _resolve_config_path(checkpoint_path: Path, explicit_config: Optional[Path]) -> Path:
     if explicit_config is not None:
-        return explicit_config
-    candidate = checkpoint_path.resolve().parents[1] / 'config.json'
-    if candidate.exists():
-        return candidate
-    raise FileNotFoundError('Could not infer config.json from checkpoint path; pass --config explicitly')
+        resolved_config = explicit_config.resolve()
+        if resolved_config.exists():
+            return resolved_config
+        raise FileNotFoundError(f'Config not found: {resolved_config}')
+
+    resolved_checkpoint = checkpoint_path.resolve()
+    for ancestor in resolved_checkpoint.parents:
+        candidate = ancestor / 'config.json'
+        if candidate.exists():
+            return candidate
+
+    raise FileNotFoundError(
+        f'Could not infer config.json from checkpoint path {resolved_checkpoint}; pass --config explicitly'
+    )
 
 
 def _prepare_eval_components(config):
@@ -142,7 +151,14 @@ def _subset_preprocessed_data(data: Dict, sample_ids: Iterable[str]) -> Dict:
 def _load_model(checkpoint_path: Path, config, device: torch.device):
     from src.training.TrainerModule import MGM2LightningModule
 
-    module = MGM2LightningModule.load_from_checkpoint(str(checkpoint_path), config=config, map_location=device)
+    # PyTorch 2.6 defaults torch.load(..., weights_only=True), but Lightning checkpoints
+    # store trusted MGM2Config objects in hyperparameters and must be loaded as full checkpoints.
+    module = MGM2LightningModule.load_from_checkpoint(
+        str(checkpoint_path),
+        config=config,
+        map_location=device,
+        weights_only=False,
+    )
     module.eval()
     module.freeze()
     module.to(device)

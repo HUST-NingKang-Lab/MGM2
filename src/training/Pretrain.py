@@ -22,7 +22,14 @@ from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, Mode
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 import torch
 
-from src.configs.Config import MGM2Config
+from src.configs.Config import (
+    AbundanceConfig,
+    LossConfig,
+    MGM2Config,
+    ModelConfig,
+    Qwen3AlignmentConfig,
+    TrainingConfig,
+)
 from src.data.Dataset import create_dataloaders_mgm2
 from src.training.TrainerModule import MGM2LightningModule
 
@@ -131,6 +138,21 @@ def create_config(args):
     return config
 
 
+def register_trusted_checkpoint_safe_globals():
+    """Allow trusted MGM2 config dataclasses to be unpickled by PyTorch 2.6 checkpoint loading."""
+    add_safe_globals = getattr(torch.serialization, 'add_safe_globals', None)
+    if add_safe_globals is None:
+        return
+    add_safe_globals([
+        MGM2Config,
+        AbundanceConfig,
+        ModelConfig,
+        LossConfig,
+        TrainingConfig,
+        Qwen3AlignmentConfig,
+    ])
+
+
 def summarize_experiment_config(config: MGM2Config) -> str:
     """Return a compact summary of the key experiment settings."""
     qwen3_status = 'enabled' if config.qwen3_alignment.enabled else 'disabled'
@@ -235,6 +257,7 @@ def main():
 
     if args.resume:
         print(f'\nResuming from checkpoint: {args.resume}')
+        register_trusted_checkpoint_safe_globals()
 
     print('\nStarting training...')
     trainer.fit(lightning_module, train_loader, val_loader, ckpt_path=str(args.resume) if args.resume else None)

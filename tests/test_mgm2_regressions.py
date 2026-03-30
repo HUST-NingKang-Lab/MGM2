@@ -940,6 +940,21 @@ class MGM2RegressionTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 train_module.create_config(args)
 
+    def test_pretrain_registers_safe_globals_for_resume(self):
+        train_module = importlib.import_module("src.training.Pretrain")
+
+        with patch.object(torch.serialization, "add_safe_globals") as mocked_add:
+            train_module.register_trusted_checkpoint_safe_globals()
+
+        mocked_add.assert_called_once()
+        registered = mocked_add.call_args.args[0]
+        self.assertIn(MGM2Config, registered)
+        self.assertIn(train_module.AbundanceConfig, registered)
+        self.assertIn(train_module.ModelConfig, registered)
+        self.assertIn(train_module.LossConfig, registered)
+        self.assertIn(train_module.TrainingConfig, registered)
+        self.assertIn(train_module.Qwen3AlignmentConfig, registered)
+
     def test_pretrain_script_runs_from_outside_repo(self):
         script_path = Path(__file__).resolve().parents[1] / "src" / "training" / "Pretrain.py"
         env = os.environ.copy()
@@ -1091,6 +1106,50 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertEqual(2, counts["soil"])
         self.assertEqual(2, counts["plant"])
         self.assertEqual(2, counts["water"])
+
+    def test_embedding_eval_infers_config_by_searching_checkpoint_ancestors(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_embeddings.py"
+        spec = importlib.util.spec_from_file_location("evaluate_embeddings", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            run_dir = tmpdir / "run_001"
+            checkpoint_dir = run_dir / "artifacts" / "checkpoints"
+            checkpoint_dir.mkdir(parents=True)
+            config_path = run_dir / "config.json"
+            config_path.write_text("{}")
+            checkpoint_path = checkpoint_dir / "last.ckpt"
+            checkpoint_path.write_text("ckpt")
+
+            resolved = module._resolve_config_path(checkpoint_path, None)
+
+            self.assertEqual(config_path.resolve(), resolved)
+
+    def test_embedding_eval_load_model_disables_weights_only_for_trusted_lightning_checkpoints(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_embeddings.py"
+        spec = importlib.util.spec_from_file_location("evaluate_embeddings", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        fake_loaded = SimpleNamespace()
+        fake_loaded.eval = lambda: None
+        fake_loaded.freeze = lambda: None
+        fake_loaded.to = lambda device: None
+        device = torch.device("cpu")
+        config = object()
+
+        with patch.object(MGM2LightningModule, "load_from_checkpoint", return_value=fake_loaded) as mocked_load:
+            loaded = module._load_model(Path("demo.ckpt"), config=config, device=device)
+
+        mocked_load.assert_called_once_with(
+            str(Path("demo.ckpt")),
+            config=config,
+            map_location=device,
+            weights_only=False,
+        )
+        self.assertIs(loaded, fake_loaded)
 
     def test_stage1_grid_summary_helper_records_primary_and_secondary_metrics(self):
         module_path = Path(__file__).resolve().parents[1] / "scripts" / "summarize_grid_results.py"
