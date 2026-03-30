@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import h5py
 import numpy as np
+import pandas as pd
 import torch
 
 from src.configs.Config import MGM2Config
@@ -1041,6 +1042,55 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertEqual(0.5, updated["loss"]["lambda_regression"])
         self.assertEqual(0.2, updated["qwen3_alignment"]["loss_weight"])
         self.assertEqual(1e-4, config["training"]["learning_rate"])
+
+    def test_embedding_eval_selects_requested_sample_embedding_strategy(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_embeddings.py"
+        spec = importlib.util.spec_from_file_location("evaluate_embeddings", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        outputs = {
+            "cls_hidden": torch.tensor([[10.0, 20.0]], dtype=torch.float32),
+            "hidden_states": torch.tensor(
+                [[[10.0, 20.0], [1.0, 3.0], [5.0, 7.0], [9.0, 11.0]]],
+                dtype=torch.float32,
+            ),
+            "qwen3_proj": torch.tensor([[0.5, 0.25]], dtype=torch.float32),
+        }
+        attention_mask = torch.tensor([[1, 1, 1, 0]], dtype=torch.long)
+
+        cls_embedding = module.select_sample_embeddings(outputs, attention_mask, strategy="cls")
+        mean_embedding = module.select_sample_embeddings(outputs, attention_mask, strategy="mean_pool")
+        qwen3_embedding = module.select_sample_embeddings(outputs, attention_mask, strategy="qwen3_proj")
+
+        self.assertTrue(np.allclose(cls_embedding, np.array([[10.0, 20.0]], dtype=np.float32)))
+        self.assertTrue(np.allclose(mean_embedding, np.array([[3.0, 5.0]], dtype=np.float32)))
+        self.assertTrue(np.allclose(qwen3_embedding, np.array([[0.5, 0.25]], dtype=np.float32)))
+
+    def test_embedding_eval_balanced_sampling_limits_each_label(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_embeddings.py"
+        spec = importlib.util.spec_from_file_location("evaluate_embeddings", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        metadata = pd.DataFrame(
+            {
+                "sample_id": [f"s{i}" for i in range(8)],
+                "label": ["soil", "soil", "soil", "plant", "plant", "plant", "water", "water"],
+            }
+        )
+
+        sampled = module.sample_metadata_balanced(
+            metadata,
+            label_column="label",
+            max_samples_per_label=2,
+            seed=42,
+        )
+        counts = sampled["label"].value_counts().to_dict()
+
+        self.assertEqual(2, counts["soil"])
+        self.assertEqual(2, counts["plant"])
+        self.assertEqual(2, counts["water"])
 
     def test_stage1_grid_summary_helper_records_primary_and_secondary_metrics(self):
         module_path = Path(__file__).resolve().parents[1] / "scripts" / "summarize_grid_results.py"
