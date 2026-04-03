@@ -15,16 +15,15 @@ QWEN3_EMBEDDING_PATH="qwen3_embeddings/microbeatlas_keywords_emb.h5"
 OUTPUT_ROOT="outputs_grid/stage2"
 RUN_GROUP="$(date +%Y%m%d_%H%M%S)"
 MAX_EPOCHS=50
-BATCH_SIZE=32
 NUM_WORKERS=4
 DEVICES=(6 7)
 EXPERIMENT_PREFIX="stage2_scale"
 
 PRESETS=(
-  "scale_small|224|6|4|896"
-  "scale_medium|320|6|5|1280"
-  "scale_large|384|8|6|1536"
-  "scale_xlarge|512|10|8|2048"
+  "scale_small|224|6|4|896|1024"
+  "scale_medium|320|6|5|1280|640"
+  "scale_large|384|8|6|1536|384"
+  "scale_xlarge|512|10|8|2048|256"
 )
 
 for required in "$BASE_CONFIG" "$DATA_FILE" "$NTV3_EMBEDDING_PATH"; do
@@ -48,7 +47,7 @@ if [[ -n "${QWEN3_EMBEDDING_PATH}" ]]; then
 fi
 
 for preset in "${PRESETS[@]}"; do
-  IFS='|' read -r preset_name hidden_size num_hidden_layers num_attention_heads intermediate_size <<< "${preset}"
+  IFS='|' read -r preset_name hidden_size num_hidden_layers num_attention_heads intermediate_size batch_size <<< "${preset}"
   run_name="${EXPERIMENT_PREFIX}_${preset_name}"
   run_dir="${STAGE_ROOT}/${preset_name}"
   config_path="${run_dir}/config.json"
@@ -63,7 +62,7 @@ for preset in "${PRESETS[@]}"; do
     --ntv3_embedding_path "${NTV3_EMBEDDING_PATH}"
     --config "${config_path}"
     --max_epochs "${MAX_EPOCHS}"
-    --batch_size "${BATCH_SIZE}"
+    --batch_size "${batch_size}"
     --num_workers "${NUM_WORKERS}"
     --output_dir "${run_dir}"
     --experiment_name "${run_name}"

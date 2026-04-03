@@ -136,6 +136,58 @@ class MGM2RegressionTests(unittest.TestCase):
 
         self.assertTrue(np.array_equal(labels_a, labels_b))
 
+    def test_build_dataset_top_k_otus_keeps_highest_relative_abundance(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            embedding_path = Path(tmpdir) / "embeddings.h5"
+            self._create_embedding_file(embedding_path, ["otu_a", "otu_b", "otu_c"], embedding_dim=3)
+
+            builder = MGM2DatasetBuilder(str(embedding_path), embedding_dim=3, top_k_otus=2)
+            builder.load_ntv3_embeddings()
+            sample = builder.build_sample(
+                ["otu_a", "otu_b", "otu_c"],
+                np.array([0.6, 0.1, 0.3], dtype=np.float32),
+            )
+
+            self.assertEqual(sample["input_ids"].tolist(), [-1, 0, 2])
+            self.assertTrue(np.allclose(sample["abundance_values"], np.array([0.0, 0.6, 0.3], dtype=np.float32)))
+
+    def test_build_dataset_top_k_otus_zero_keeps_all_nonzero_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            embedding_path = Path(tmpdir) / "embeddings.h5"
+            self._create_embedding_file(embedding_path, ["otu_a", "otu_b", "otu_c"], embedding_dim=3)
+
+            builder = MGM2DatasetBuilder(str(embedding_path), embedding_dim=3, top_k_otus=0)
+            builder.load_ntv3_embeddings()
+            sample = builder.build_sample(
+                ["otu_a", "otu_b", "otu_c"],
+                np.array([0.6, 0.1, 0.3], dtype=np.float32),
+            )
+
+            self.assertEqual(sample["input_ids"].tolist(), [-1, 0, 1, 2])
+
+    def test_build_dataset_stores_top_k_otus_in_preprocessing_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            embedding_path = Path(tmpdir) / "embeddings.h5"
+            otu_table_path = Path(tmpdir) / "otu_table.csv"
+            output_path = Path(tmpdir) / "dataset.pkl"
+            self._create_embedding_file(embedding_path, ["otu_a", "otu_b", "otu_c"], embedding_dim=3)
+
+            otu_table = pd.DataFrame(
+                {"sample_1": [6.0, 1.0, 3.0]},
+                index=["otu_a", "otu_b", "otu_c"],
+            )
+            otu_table.to_csv(otu_table_path)
+
+            builder = MGM2DatasetBuilder(str(embedding_path), embedding_dim=3, top_k_otus=2)
+            builder.load_ntv3_embeddings()
+            builder.process_otu_table(str(otu_table_path), str(output_path), input_format="csv")
+
+            with open(output_path, "rb") as handle:
+                payload = pickle.load(handle)
+
+            self.assertEqual(payload["preprocessing"]["top_k_otus"], 2)
+            self.assertEqual(payload["otu_data"]["sample_1"]["input_ids"].tolist(), [-1, 0, 2])
+
     def test_regression_top_k_bins_expands_regression_supervision(self):
         manager = BinManager(
             num_bins=5,
@@ -1107,6 +1159,50 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertEqual(2, counts["plant"])
         self.assertEqual(2, counts["water"])
 
+    def test_embedding_eval_filters_labels_by_requested_keywords(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_embeddings.py"
+        spec = importlib.util.spec_from_file_location("evaluate_embeddings", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        metadata = pd.DataFrame(
+            {
+                "sample_id": [f"s{i}" for i in range(6)],
+                "label": [
+                    "Aquatic biome",
+                    "animal gut",
+                    "SOIL microbiome",
+                    "plant rhizosphere",
+                    "marine sediment",
+                    "human oral",
+                ],
+            }
+        )
+
+        filtered = module.filter_metadata_by_keywords(metadata, "label", module.LABEL_KEYWORDS)
+
+        self.assertEqual(["s0", "s1", "s2", "s3"], filtered["sample_id"].tolist())
+
+    def test_embedding_eval_save_plot_writes_pdf_with_editable_font_setting(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_embeddings.py"
+        spec = importlib.util.spec_from_file_location("evaluate_embeddings", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "demo.png"
+            module._save_plot(
+                np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32),
+                ["soil", "plant"],
+                output_path,
+                "demo",
+            )
+
+            self.assertTrue(output_path.exists())
+            self.assertTrue(output_path.with_suffix('.pdf').exists())
+            import matplotlib
+            self.assertEqual(42, matplotlib.rcParams['pdf.fonttype'])
+
     def test_embedding_eval_infers_config_by_searching_checkpoint_ancestors(self):
         module_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_embeddings.py"
         spec = importlib.util.spec_from_file_location("evaluate_embeddings", module_path)
@@ -1151,6 +1247,49 @@ class MGM2RegressionTests(unittest.TestCase):
         )
         self.assertIs(loaded, fake_loaded)
 
+    def test_embedding_eval_extract_embeddings_uses_progress_wrapper(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_embeddings.py"
+        spec = importlib.util.spec_from_file_location("evaluate_embeddings", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        class DummyModel:
+            def __call__(self, **kwargs):
+                return {
+                    "cls_hidden": torch.tensor([[1.0, 2.0]], dtype=torch.float32),
+                    "hidden_states": torch.tensor([[[1.0, 2.0]]], dtype=torch.float32),
+                }
+
+        dummy_module = SimpleNamespace(
+            model=DummyModel(),
+            _extract_model_inputs=lambda batch: batch,
+        )
+        loader = [
+            {
+                "input_ids": torch.tensor([[1]], dtype=torch.long),
+                "attention_mask": torch.tensor([[1]], dtype=torch.long),
+            }
+        ]
+
+        with patch.object(module, "_wrap_progress", side_effect=lambda iterable, total, desc, disable: iterable) as mocked_progress:
+            embeddings, sample_ids = module._extract_embeddings(
+                dummy_module,
+                loader,
+                ["sample_1"],
+                strategy="cls",
+                device=torch.device("cpu"),
+                show_progress=True,
+            )
+
+        mocked_progress.assert_called_once_with(
+            loader,
+            total=1,
+            desc="Extracting embeddings",
+            disable=False,
+        )
+        self.assertEqual(["sample_1"], sample_ids)
+        self.assertTrue(np.allclose(embeddings, np.array([[1.0, 2.0]], dtype=np.float32)))
+
     def test_stage1_grid_summary_helper_records_primary_and_secondary_metrics(self):
         module_path = Path(__file__).resolve().parents[1] / "scripts" / "summarize_grid_results.py"
         spec = importlib.util.spec_from_file_location("summarize_grid_results", module_path)
@@ -1174,6 +1313,85 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertEqual(0.90, summary["best_val_total_loss"])
         self.assertEqual(0.55, summary["best_val_bin_accuracy"])
         self.assertEqual(0.25, summary["best_val_regression_mse"])
+
+
+    def test_nonzero_otu_analysis_counts_exclude_cls_token(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "analyze_nonzero_otu_counts.py"
+        spec = importlib.util.spec_from_file_location("analyze_nonzero_otu_counts", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        data = {
+            "samples": ["s1", "s2"],
+            "otu_data": {
+                "s1": {"input_ids": np.array([-1, 1, 2, 3], dtype=np.int64)},
+                "s2": {"input_ids": np.array([-1, 7], dtype=np.int64)},
+            },
+        }
+
+        count_table = module.compute_nonzero_otu_counts(data)
+
+        self.assertEqual([3, 1], count_table["nonzero_otu_count"].tolist())
+
+    def test_nonzero_otu_analysis_summarizes_distribution(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "analyze_nonzero_otu_counts.py"
+        spec = importlib.util.spec_from_file_location("analyze_nonzero_otu_counts", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        count_table = pd.DataFrame({"nonzero_otu_count": [1, 2, 3, 4, 5]})
+        summary = module.summarize_counts(count_table)
+
+        self.assertEqual(5, summary["num_samples"])
+        self.assertEqual(1, summary["min"])
+        self.assertEqual(5, summary["max"])
+        self.assertAlmostEqual(3.0, summary["median"])
+        self.assertAlmostEqual(4.6, summary["p90"])
+
+
+    def test_nonzero_otu_analysis_summarizes_top_k_tradeoffs(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "analyze_nonzero_otu_counts.py"
+        spec = importlib.util.spec_from_file_location("analyze_nonzero_otu_counts", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        data = {
+            "samples": ["s1", "s2", "s3"],
+            "otu_data": {
+                "s1": {"abundance_values": np.array([0.0, 0.5, 0.2, 1e-4], dtype=np.float32)},
+                "s2": {"abundance_values": np.array([0.0, 0.9, 0.8, 0.7], dtype=np.float32)},
+                "s3": {"abundance_values": np.array([0.0, 0.6, 0.4], dtype=np.float32)},
+            },
+        }
+
+        summary = module.summarize_top_k_tradeoffs(data, [2, 3], floor_abundance=1e-4)
+
+        top2 = summary.loc[summary["top_k_otus"] == 2].iloc[0]
+        top3 = summary.loc[summary["top_k_otus"] == 3].iloc[0]
+        self.assertEqual(2, int(top2["truncated_samples"]))
+        self.assertAlmostEqual(2 / 3, float(top2["truncated_fraction"]))
+        self.assertEqual(2, int(top3["eligible_samples"]))
+        self.assertAlmostEqual(0.5, float(top3["floor_or_below_fraction"]))
+
+    def test_nonzero_otu_analysis_builds_top_k_recommendations(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "analyze_nonzero_otu_counts.py"
+        spec = importlib.util.spec_from_file_location("analyze_nonzero_otu_counts", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        tradeoff_table = pd.DataFrame(
+            {
+                "top_k_otus": [512, 768, 1024],
+                "truncated_fraction": [0.11, 0.04, 0.008],
+                "floor_or_below_fraction": [0.08, 0.20, 0.30],
+            }
+        )
+
+        recommendations = module.build_top_k_recommendations(tradeoff_table)
+
+        self.assertEqual(768, recommendations["balanced"])
+        self.assertEqual(1024, recommendations["conservative"])
+        self.assertEqual(512, recommendations["aggressive"])
 
 
 if __name__ == "__main__":

@@ -19,6 +19,9 @@ from torch.utils.data import DataLoader
 logger = logging.getLogger(__name__)
 
 
+LABEL_KEYWORDS = ('aquatic', 'animal', 'soil', 'plant')
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Evaluate MGM2 sample embeddings from a checkpoint',
@@ -48,6 +51,7 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
     parser.add_argument('--no_umap', action='store_true', help='Skip UMAP even if umap-learn is installed')
+    parser.add_argument('--disable_progress', action='store_true', help='Disable tqdm progress bars during evaluation')
     return parser.parse_args()
 
 
@@ -69,6 +73,13 @@ def select_sample_embeddings(outputs: Dict[str, torch.Tensor], attention_mask: t
     denom = mask.sum(dim=1).clamp_min(1.0)
     mean_pool = (hidden_states * mask).sum(dim=1) / denom
     return mean_pool.detach().cpu().numpy().astype(np.float32)
+
+
+def filter_metadata_by_keywords(metadata: pd.DataFrame, label_column: str, keywords: Iterable[str]) -> pd.DataFrame:
+    keyword_list = tuple(keyword.lower() for keyword in keywords)
+    label_series = metadata[label_column].astype(str).str.lower()
+    mask = label_series.apply(lambda value: any(keyword in value for keyword in keyword_list))
+    return metadata[mask].copy()
 
 
 def sample_metadata_balanced(
@@ -148,6 +159,17 @@ def _subset_preprocessed_data(data: Dict, sample_ids: Iterable[str]) -> Dict:
     return subset
 
 
+def _wrap_progress(iterable, total: Optional[int], desc: str, disable: bool = False):
+    if disable:
+        return iterable
+    try:
+        from tqdm.auto import tqdm
+    except ImportError:
+        logger.info('tqdm is not installed; proceeding without progress bars for %s', desc)
+        return iterable
+    return tqdm(iterable, total=total, desc=desc, leave=False)
+
+
 def _load_model(checkpoint_path: Path, config, device: torch.device):
     from src.training.TrainerModule import MGM2LightningModule
 
@@ -192,12 +214,29 @@ def _build_eval_loader(config, sample_ids: List[str], batch_size: int, num_worke
     return loader, subset_data['samples']
 
 
-def _extract_embeddings(module, loader: DataLoader, sample_ids: List[str], strategy: str, device: torch.device):
+def _extract_embeddings(
+    module,
+    loader: DataLoader,
+    sample_ids: List[str],
+    strategy: str,
+    device: torch.device,
+    show_progress: bool = True,
+):
     all_embeddings = []
     collected_ids: List[str] = []
     offset = 0
+    try:
+        total_batches = len(loader)
+    except TypeError:
+        total_batches = None
+    batch_iterator = _wrap_progress(
+        loader,
+        total=total_batches,
+        desc='Extracting embeddings',
+        disable=not show_progress,
+    )
     with torch.no_grad():
-        for batch in loader:
+        for batch in batch_iterator:
             batch_size = batch['input_ids'].size(0)
             batch_on_device = {
                 key: value.to(device) if torch.is_tensor(value) else value
@@ -232,15 +271,20 @@ def _compute_label_metrics(embeddings: np.ndarray, labels: np.ndarray) -> Dict[s
 
 
 def _save_plot(coords: np.ndarray, labels: List[str], output_path: Path, title: str):
+    import matplotlib
     import matplotlib.pyplot as plt
     import seaborn as sns
+
+    matplotlib.rcParams['pdf.fonttype'] = 42
 
     df = pd.DataFrame({'x': coords[:, 0], 'y': coords[:, 1], 'label': labels})
     plt.figure(figsize=(10, 8))
     sns.scatterplot(data=df, x='x', y='y', hue='label', s=25, alpha=0.8)
     plt.title(title)
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300)
+    base_path = output_path.with_suffix('')
+    plt.savefig(base_path.with_suffix('.png'), dpi=300)
+    plt.savefig(base_path.with_suffix('.pdf'))
     plt.close()
 
 
@@ -275,6 +319,11 @@ def main():
     if metadata.empty:
         raise ValueError('No metadata rows matched sample IDs in the dataset')
 
+    metadata = filter_metadata_by_keywords(metadata, args.label_column, LABEL_KEYWORDS)
+    if metadata.empty:
+        raise ValueError(f'No metadata rows matched label keywords: {LABEL_KEYWORDS}')
+    logger.info('Retained %d samples after keyword filtering with %s', len(metadata), ','.join(LABEL_KEYWORDS))
+
     metadata = sample_metadata_balanced(
         metadata,
         label_column=args.label_column,
@@ -285,14 +334,25 @@ def main():
     sample_ids = metadata[args.sample_id_column].tolist()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info('Building evaluation dataloader for %d samples', len(sample_ids))
     loader, ordered_sample_ids = _build_eval_loader(config, sample_ids, args.batch_size, args.num_workers)
     metadata = metadata.set_index(args.sample_id_column).loc[ordered_sample_ids].reset_index()
     labels = metadata[args.label_column].tolist()
 
     device = torch.device(args.device)
+    logger.info('Loading checkpoint from %s', checkpoint_path)
     module = _load_model(checkpoint_path, config, device)
-    embeddings, ordered_sample_ids = _extract_embeddings(module, loader, ordered_sample_ids, args.embedding_strategy, device)
+    logger.info('Extracting %s embeddings on %s', args.embedding_strategy, device)
+    embeddings, ordered_sample_ids = _extract_embeddings(
+        module,
+        loader,
+        ordered_sample_ids,
+        args.embedding_strategy,
+        device,
+        show_progress=not args.disable_progress,
+    )
 
+    logger.info('Computing label metrics')
     metrics = _compute_label_metrics(embeddings, np.asarray(labels))
     metrics.update(
         {
@@ -315,6 +375,7 @@ def main():
     (args.output_dir / 'metrics.json').write_text(json.dumps(metrics, indent=2, ensure_ascii=False))
 
     if embeddings.shape[0] >= 2:
+        logger.info('Saving PCA visualization')
         from sklearn.decomposition import PCA
 
         pca_coords = PCA(n_components=2, random_state=args.seed).fit_transform(embeddings)
@@ -323,11 +384,13 @@ def main():
         try:
             import umap  # type: ignore
 
+            logger.info('Saving UMAP visualization')
             umap_coords = umap.UMAP(n_neighbors=15, min_dist=0.3, random_state=args.seed).fit_transform(embeddings)
             _save_plot(umap_coords, labels, args.output_dir / 'umap.png', f'UMAP of {args.embedding_strategy} embeddings')
         except ImportError:
             from sklearn.manifold import TSNE
 
+            logger.info('UMAP unavailable; saving t-SNE visualization instead')
             tsne_coords = TSNE(n_components=2, random_state=args.seed, init='pca', learning_rate='auto').fit_transform(embeddings)
             _save_plot(tsne_coords, labels, args.output_dir / 'tsne.png', f't-SNE of {args.embedding_strategy} embeddings')
 

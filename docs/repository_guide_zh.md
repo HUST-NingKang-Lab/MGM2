@@ -82,6 +82,7 @@ MGM2/
 - 读取 CSV 或 BIOM OTU 表
 - 计算相对丰度
 - 每个样本只保留非零 OTU
+- 可选只保留相对丰度最高的 `top_k_otus` 个 OTU 作为长度截断
 - 把 OTU ID 映射到 NTv3 索引
 - 保存轻量 pickle 数据集
 
@@ -92,8 +93,16 @@ MGM2/
 - `otu_id_to_idx`
 - `ntv3_embedding_path`
 - `format_version`
+- `preprocessing.top_k_otus`
 
 注意：这里保存的是原始相对丰度，而不是 log 后结果。真正的 abundance 预处理发生在训练数据集阶段。
+
+结合当前 `data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.mgm2v1.pkl` 的全量统计，推荐优先尝试 `--top_k_otus 768`：
+
+- `512` 会截断约 `10.98%` 样本，但 floor-heavy 尾部最轻
+- `768` 会截断约 `4.95%` 样本，是当前更平衡的默认建议
+- `1024` 虽只截断约 `2.41%` 样本，但第 1024 大 abundance 已经有约 `56.9%` 落到 `<= 1e-4`
+- `1536` 和 `2048` 更像只切极端长尾，但会保留大量低信息 floor token
 
 ### 4.3 训练时的数据处理
 

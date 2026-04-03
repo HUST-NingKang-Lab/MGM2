@@ -41,8 +41,10 @@ src/
 ### 构建数据集
 
 ```bash
-python src/data/build_dataset.py   --otu_table data/otu_table.csv   --format csv   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --output data/pretrain_dataset.pkl
+python src/data/build_dataset.py   --otu_table data/otu_table.csv   --format csv   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --top_k_otus 768   --output data/pretrain_dataset.pkl
 ```
+
+推荐先在建库阶段加上 `--top_k_otus 768`。根据当前 MicrobeAtlas 全量统计，这个值比 `1024+` 更能控制 `1e-4` floor-heavy 尾部，同时只截断约 5% 的样本；如果更保守可以试 `1024`，更强调显存则试 `512`。
 
 ### 预训练
 

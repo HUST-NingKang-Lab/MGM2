@@ -55,14 +55,20 @@ You need to prepare or mount these resources separately in your own environment.
 From a CSV OTU table:
 
 ```bash
-python src/data/build_dataset.py   --otu_table data/otu_table.csv   --format csv   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --output data/pretrain_dataset.pkl
+python src/data/build_dataset.py   --otu_table data/otu_table.csv   --format csv   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --top_k_otus 768   --output data/pretrain_dataset.pkl
 ```
 
 From a BIOM OTU table:
 
 ```bash
-python src/data/build_dataset.py   --otu_table data/otu_table.biom   --format biom   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --output data/pretrain_dataset.pkl
+python src/data/build_dataset.py   --otu_table data/otu_table.biom   --format biom   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --top_k_otus 768   --output data/pretrain_dataset.pkl
 ```
+
+Recommended preprocessing setting:
+
+- `--top_k_otus 768` is currently the best default starting point for this repository.
+- It truncates about 5% of samples in the analyzed MicrobeAtlas dataset, while avoiding the heavier low-abundance floor tail that appears at `1024+`.
+- If you need a more conservative setting, try `1024`; if you need a more memory-efficient setting, try `512`.
 
 ### 2. Pretrain the default dual-task model
 
