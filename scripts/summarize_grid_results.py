@@ -4,6 +4,7 @@
 Example:
     python scripts/summarize_grid_results.py \
         --metrics_csv outputs_grid/stage1/run_001/logs/demo/version_0/metrics.csv \
+# If version_0 is missing, the script automatically falls back to the latest sibling version_*/metrics.csv.
         --summary_csv outputs_grid/stage1/summary.csv \
         --run_name run_001 \
         --output_dir outputs_grid/stage1/run_001 \
@@ -17,8 +18,32 @@ import argparse
 import csv
 import json
 from pathlib import Path
-from typing import Dict, Iterable
+from typing import Dict
 
+
+
+
+def _version_sort_key(path: Path) -> tuple[int, float]:
+    parent_name = path.parent.name
+    try:
+        version_idx = int(parent_name.split('_')[1]) if parent_name.startswith('version_') else -1
+    except (IndexError, ValueError):
+        version_idx = -1
+    return version_idx, path.stat().st_mtime
+
+
+def resolve_metrics_csv(metrics_csv: Path) -> Path:
+    if metrics_csv.exists():
+        return metrics_csv
+
+    version_parent = metrics_csv.parent.parent if metrics_csv.parent.name.startswith('version_') else metrics_csv.parent
+    candidates = sorted(version_parent.glob('version_*/metrics.csv'), key=_version_sort_key, reverse=True)
+    if candidates:
+        return candidates[0]
+
+    raise FileNotFoundError(
+        f'Could not find metrics.csv at {metrics_csv} or any sibling version_* directory under {version_parent}'
+    )
 
 def _to_float(value: str | None) -> float | None:
     if value is None or value == '':
@@ -27,6 +52,7 @@ def _to_float(value: str | None) -> float | None:
 
 
 def extract_best_metrics(metrics_csv: Path) -> Dict[str, float]:
+    metrics_csv = resolve_metrics_csv(metrics_csv)
     with metrics_csv.open('r', encoding='utf-8', newline='') as handle:
         rows = list(csv.DictReader(handle))
 

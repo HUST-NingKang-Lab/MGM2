@@ -1290,6 +1290,34 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertEqual(["sample_1"], sample_ids)
         self.assertTrue(np.allclose(embeddings, np.array([[1.0, 2.0]], dtype=np.float32)))
 
+    def test_stage1_grid_summary_helper_falls_back_to_latest_metrics_version(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "summarize_grid_results.py"
+        spec = importlib.util.spec_from_file_location("summarize_grid_results", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            version_1 = tmpdir / "logs" / "demo" / "version_1"
+            version_2 = tmpdir / "logs" / "demo" / "version_2"
+            version_1.mkdir(parents=True)
+            version_2.mkdir(parents=True)
+            (version_1 / "metrics.csv").write_text(
+                "epoch,val/total_loss,val/bin_accuracy,val/regression_mse\n"
+                "0,0.80,0.60,0.20\n"
+            )
+            (version_2 / "metrics.csv").write_text(
+                "epoch,val/total_loss,val/bin_accuracy,val/regression_mse\n"
+                "0,0.70,0.65,0.18\n"
+            )
+
+            requested = tmpdir / "logs" / "demo" / "version_0" / "metrics.csv"
+            summary = module.extract_best_metrics(requested)
+
+        self.assertEqual(0.70, summary["best_val_total_loss"])
+        self.assertEqual(0.65, summary["best_val_bin_accuracy"])
+        self.assertEqual(0.18, summary["best_val_regression_mse"])
+
     def test_stage1_grid_summary_helper_records_primary_and_secondary_metrics(self):
         module_path = Path(__file__).resolve().parents[1] / "scripts" / "summarize_grid_results.py"
         spec = importlib.util.spec_from_file_location("summarize_grid_results", module_path)
