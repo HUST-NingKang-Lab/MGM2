@@ -23,7 +23,7 @@ from src.data.Dataset import BatchCollatorMGM2, MicrobiomeDatasetMGM2, create_da
 from src.data.Preprocessing import AbundancePreprocessor, BinManager
 from src.data.utils import load_ntv3_embeddings, load_preprocessed_data
 from src.losses.MultiTaskLoss import MGM2MultiTaskLoss
-from src.models import MGM2Model
+from src.models import ClassificationHead, MGM2Model
 from src.models.BaseModel import BaseModel
 from src.training.TrainerModule import MGM2LightningModule
 
@@ -538,6 +538,43 @@ class MGM2RegressionTests(unittest.TestCase):
             self.assertEqual(2, len(val_loader.dataset))
             self.assertEqual(6, len(train_loader.dataset) + len(val_loader.dataset))
 
+    def test_create_dataloaders_masks_validation_inputs_deterministically(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            data_path = tmpdir / "dataset.pkl"
+            embedding_path = tmpdir / "embeddings.h5"
+            output_dir = tmpdir / "outputs"
+
+            self._create_preprocessed_dataset_file(data_path, sample_count=6)
+            self._create_embedding_file(embedding_path, ["otu_a", "otu_b"])
+
+            train_loader, val_loader = create_dataloaders_mgm2(
+                data_path=str(data_path),
+                ntv3_embedding_path=str(embedding_path),
+                abundance_bin_config=MGM2Config().abundance.__dict__.copy(),
+                training_config={
+                    "batch_size": 2,
+                    "output_dir": str(output_dir),
+                    "seed": 11,
+                    "mask_ratio": (1.0, 0.0, 0.0),
+                },
+                mask_prob=1.0,
+                num_workers=0,
+                train_ratio=0.5,
+                val_ratio=0.5,
+                include_test_loader=False,
+            )
+
+            first_val_sample = val_loader.dataset[0]
+            second_val_sample = val_loader.dataset[0]
+            unmasked_val_sample = val_loader.dataset._build_sample(0)
+
+            self.assertFalse(torch.equal(first_val_sample["abundance_values"], unmasked_val_sample["abundance_values"]))
+            self.assertTrue(torch.equal(first_val_sample["abundance_values"], second_val_sample["abundance_values"]))
+            self.assertTrue(torch.equal(first_val_sample["bin_labels"], second_val_sample["bin_labels"]))
+            self.assertTrue((first_val_sample["bin_labels"][1:] != -100).any())
+            self.assertEqual(3, len(train_loader.dataset))
+
     def test_create_dataloaders_skips_startup_abundance_transform_for_quantile_binning(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
@@ -585,6 +622,13 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertAlmostEqual(0.9, config.training.train_ratio)
         self.assertAlmostEqual(0.1, config.training.val_ratio)
         self.assertAlmostEqual(1.0, config.training.train_ratio + config.training.val_ratio)
+
+    def test_default_config_uses_warmup_cosine_scheduler(self):
+        config = MGM2Config.load("src/configs/mgm2_default.json")
+
+        self.assertEqual("warmup_cosine", config.training.lr_scheduler)
+        self.assertGreater(config.training.min_lr_ratio, 0.0)
+        self.assertLess(config.training.min_lr_ratio, 1.0)
 
     def test_default_config_uses_small_model_preset(self):
         config = MGM2Config.load("src/configs/mgm2_default.json")
@@ -771,6 +815,31 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertIn("qwen3_proj", aligned_outputs)
         self.assertEqual((1, 6), tuple(aligned_outputs["qwen3_proj"].shape))
 
+    def test_model_exposes_optional_classification_logits(self):
+        model_config = {
+            "embedding_dim": 4,
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "max_position_embeddings": 16,
+        }
+        model = MGM2Model(
+            config=model_config,
+            num_bins=5,
+            enable_regression=False,
+            classification_num_classes=3,
+        )
+        outputs = model(
+            input_ids=torch.tensor([[-1, 0, 1], [-1, 1, 0]]),
+            embeddings=torch.randn(2, 3, 4),
+            abundance_values=torch.randn(2, 3),
+            attention_mask=torch.tensor([[1, 1, 1], [1, 1, 1]]),
+        )
+
+        self.assertIsInstance(model.classification_head, ClassificationHead)
+        self.assertEqual((2, 3), tuple(outputs["classification_logits"].shape))
+
     def test_multitask_loss_returns_zero_alignment_loss_with_fewer_than_two_valid_pairs(self):
         criterion = MGM2MultiTaskLoss(
             num_bins=5,
@@ -886,6 +955,29 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertIn("qwen3_proj", predictions)
         self.assertIn("qwen3_embedding", labels)
         self.assertIn("qwen3_alignment_mask", labels)
+
+    def test_lightning_module_uses_warmup_cosine_scheduler(self):
+        config = MGM2Config()
+        config.model.embedding_dim = 4
+        config.model.hidden_size = 8
+        config.model.intermediate_size = 16
+        config.model.num_hidden_layers = 1
+        config.model.num_attention_heads = 2
+        config.model.max_position_embeddings = 16
+        config.training.warmup_steps = 2
+        config.training.lr_scheduler = "warmup_cosine"
+        config.training.min_lr_ratio = 0.2
+
+        module = MGM2LightningModule(config)
+        optimizer_config = module.configure_optimizers()
+        scheduler = optimizer_config["lr_scheduler"]["scheduler"]
+        lr_factor = scheduler.lr_lambdas[0]
+
+        self.assertIsInstance(scheduler, torch.optim.lr_scheduler.LambdaLR)
+        self.assertAlmostEqual(0.1, lr_factor(0))
+        self.assertAlmostEqual(1.0, lr_factor(2))
+        self.assertLess(lr_factor(3), 1.0)
+        self.assertGreaterEqual(lr_factor(3), 0.2)
 
 
     def test_src_package_exports_config(self):
@@ -1069,10 +1161,14 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertIn("scale_medium", script_text)
         self.assertIn("scale_large", script_text)
         self.assertIn("scale_xlarge", script_text)
-        self.assertIn('"scale_small|224|6|4|896"', script_text)
-        self.assertIn('"scale_medium|320|6|5|1280"', script_text)
-        self.assertIn('"scale_large|384|8|6|1536"', script_text)
-        self.assertIn('"scale_xlarge|512|10|8|2048"', script_text)
+        self.assertIn('"scale_small|224|6|4|896|1024"', script_text)
+        self.assertIn('"scale_medium|320|6|5|1280|640"', script_text)
+        self.assertIn('"scale_large|384|8|6|1536|384"', script_text)
+        self.assertIn('"scale_xlarge|512|10|8|2048|256"', script_text)
+        self.assertIn('REUSE_SMALL_FROM_BASE_CONFIG=true', script_text)
+        self.assertIn('if [[ "${preset_name}" == "scale_small"', script_text)
+        self.assertIn('cp -a "${base_run_dir}/checkpoints/."', script_text)
+        self.assertIn('continue', script_text)
         self.assertNotIn("scale_medium_large", script_text)
         self.assertIn("src/training/Pretrain.py", script_text)
         self.assertIn('BASE_CONFIG="', script_text)
@@ -1084,6 +1180,31 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertNotIn("for hidden_size in", script_text)
         self.assertNotIn("for num_hidden_layers in", script_text)
         self.assertNotIn("for num_attention_heads in", script_text)
+
+    def test_mgnify_mst_build_script_converts_train_and_test_without_labels(self):
+        script_path = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "downstreams"
+            / "MGnify_mst"
+            / "build_mgnify_mst_datasets.sh"
+        )
+        script_text = script_path.read_text()
+
+        self.assertTrue(script_path.exists())
+        self.assertIn("train_inputs.h5_raw.h5", script_text)
+        self.assertIn("test_inputs.h5_raw.h5", script_text)
+        self.assertIn("data/downstreams/MGnify_mst", script_text)
+        self.assertIn("src/data/build_dataset.py", script_text)
+        self.assertIn("--format h5", script_text)
+        self.assertIn('H5_KEY="genus"', script_text)
+        self.assertIn('--h5_key "${H5_KEY}"', script_text)
+        self.assertIn("train.pkl", script_text)
+        self.assertIn("test.pkl", script_text)
+        self.assertIn("train.resolved_embeddings.h5", script_text)
+        self.assertIn("test.resolved_embeddings.h5", script_text)
+        self.assertNotIn("--label_file", script_text)
+        self.assertNotIn("--label_column", script_text)
 
     def test_grid_config_builder_applies_nested_overrides(self):
         module_path = Path(__file__).resolve().parents[1] / "scripts" / "build_grid_config.py"
@@ -1109,6 +1230,223 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertEqual(0.5, updated["loss"]["lambda_regression"])
         self.assertEqual(0.2, updated["qwen3_alignment"]["loss_weight"])
         self.assertEqual(1e-4, config["training"]["learning_rate"])
+
+    def test_taxonomy_ntv3_fallback_parses_microbeatlas_ids_and_taxonomy(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "build_taxonomy_ntv3_fallback.py"
+        spec = importlib.util.spec_from_file_location("build_taxonomy_ntv3_fallback", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        otu_id = module.normalize_otu_id("90_1;96_2;97_3;98_4;99_5")
+        paths = module.parse_taxonomy(
+            "Bacteria;Firmicutes;Bacilli;Lactobacillales;Lactobacillaceae;Lactobacillus",
+            module.DEFAULT_RANKS,
+            "Lactobacillus acidophilus,Lactobacillus sp.",
+        )
+
+        self.assertEqual("99_5", otu_id)
+        self.assertEqual(("kingdom", "Bacteria"), paths[0])
+        self.assertEqual(("genus", "Bacteria;Firmicutes;Bacilli;Lactobacillales;Lactobacillaceae;Lactobacillus"), paths[5])
+        self.assertEqual(
+            ("species", "Bacteria;Firmicutes;Bacilli;Lactobacillales;Lactobacillaceae;Lactobacillus;Lactobacillus acidophilus"),
+            paths[6],
+        )
+
+    def test_taxonomy_ntv3_fallback_builds_hdf5_outputs(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "build_taxonomy_ntv3_fallback.py"
+        spec = importlib.util.spec_from_file_location("build_taxonomy_ntv3_fallback", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            ntv3_path = tmpdir / "ntv3.h5"
+            otu_info_path = tmpdir / "otus.info.tsv"
+            output_path = tmpdir / "fallback.h5"
+            summary_path = tmpdir / "fallback.tsv"
+
+            with h5py.File(ntv3_path, "w") as handle:
+                handle.create_dataset("embeddings", data=np.array([[1.0, 0.0], [0.0, 1.0], [2.0, 0.0]], dtype=np.float32))
+                handle.create_dataset("otu_ids", data=np.array([b"99_1", b"99_2", b"99_3"]))
+
+            otu_info_path.write_text(
+                "OTU\tTax\tRepSpecies\n"
+                "90_a;99_1\tBacteria;Firmicutes;Bacilli\tSpecies A\n"
+                "90_b;99_2\tBacteria;Firmicutes;Bacilli\tSpecies B\n"
+                "90_c;99_3\tBacteria;Actinobacteria;Actinomycetia\tSpecies C\n",
+                encoding="utf-8",
+            )
+
+            embeddings, otu_ids = module.load_ntv3_index(ntv3_path)
+            taxonomy_by_id = module.read_taxonomy_for_ntv3_ids(
+                otu_info_path=otu_info_path,
+                wanted_ids=set(otu_ids),
+                otu_column="OTU",
+                taxonomy_column="Tax",
+                species_column="RepSpecies",
+                chunk_size=2,
+            )
+            sums, counts, metadata, matched = module.build_taxon_sums(embeddings, otu_ids, taxonomy_by_id, module.DEFAULT_RANKS)
+            taxon_embeddings, keys, ranks, paths, count_array = module.finalize_taxon_embeddings(
+                sums=sums,
+                counts=counts,
+                metadata=metadata,
+                min_counts={rank: 1 for rank in module.DEFAULT_RANKS},
+                target_norm=None,
+            )
+            module.write_output(
+                output_path,
+                taxon_embeddings,
+                keys,
+                ranks,
+                paths,
+                count_array,
+                embeddings.mean(axis=0),
+                {"matched_otu_count": matched},
+            )
+            module.write_summary(summary_path, keys, ranks, paths, count_array)
+
+            self.assertEqual(3, matched)
+            self.assertTrue(output_path.exists())
+            self.assertTrue(summary_path.exists())
+            with h5py.File(output_path, "r") as handle:
+                self.assertIn("taxon_embeddings", handle)
+                self.assertIn("taxon_keys", handle)
+                self.assertIn("global_embedding", handle)
+                stored_keys = [value.decode("utf-8") for value in handle["taxon_keys"][:]]
+                stored_counts = handle["taxon_counts"][:]
+
+            bacilli_key = "class|Bacteria;Firmicutes;Bacilli"
+            self.assertIn(bacilli_key, stored_keys)
+            self.assertEqual(2, int(stored_counts[stored_keys.index(bacilli_key)]))
+
+    def test_taxonomy_fallback_coverage_parses_mgnify_prefixed_taxonomy(self):
+        module_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_taxonomy_fallback_coverage.py"
+        spec = importlib.util.spec_from_file_location("evaluate_taxonomy_fallback_coverage", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        taxon_keys = {
+            "kingdom|Archaea",
+            "phylum|Archaea;Candidatus_Aenigmarchaeota",
+            "genus|Archaea;Candidatus_Aenigmarchaeota;Candidatus_Aenigmarchaeum",
+        }
+
+        matched_rank, matched_key, candidate_keys = module.resolve_label(
+            "sk__Archaea;k__;p__Candidatus_Aenigmarchaeota;c__;o__;f__;g__Candidatus_Aenigmarchaeum",
+            taxon_keys,
+        )
+
+        self.assertEqual("phylum", matched_rank)
+        self.assertEqual("phylum|Archaea;Candidatus_Aenigmarchaeota", matched_key)
+        self.assertEqual(("kingdom", "kingdom|Archaea"), candidate_keys[0])
+
+        full_lineage_rank, full_lineage_key, _ = module.resolve_label(
+            "sk__Archaea;k__;p__Crenarchaeota;c__Thermoprotei;o__Sulfolobales;f__Sulfolobaceae;g__Metallosphaera",
+            {
+                "genus|Archaea;Crenarchaeota;Thermoprotei;Sulfolobales;Sulfolobaceae;Metallosphaera",
+            },
+        )
+        self.assertEqual("genus", full_lineage_rank)
+        self.assertEqual(
+            "genus|Archaea;Crenarchaeota;Thermoprotei;Sulfolobales;Sulfolobaceae;Metallosphaera",
+            full_lineage_key,
+        )
+
+        eukaryote_paths = module.build_cumulative_keys(
+            module.parse_taxonomy_label("sk__Eukaryota;k__Fungi;p__Ascomycota")
+        )
+        self.assertEqual(("kingdom", "kingdom|Eukaryota"), eukaryote_paths[0])
+        self.assertEqual(("phylum", "phylum|Eukaryota;Fungi"), eukaryote_paths[1])
+        self.assertEqual(("class", "class|Eukaryota;Fungi;Ascomycota"), eukaryote_paths[2])
+
+    def test_build_dataset_tsv_outputs_mgm2_dataset_without_labels(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            embedding_path = tmpdir / "embeddings.h5"
+            table_path = tmpdir / "otu_table.tsv"
+            output_path = tmpdir / "pretrain_dataset.pkl"
+            self._create_embedding_file(embedding_path, ["otu_a", "otu_b"], embedding_dim=3)
+
+            table_path.write_text(
+                "otu_id\ts1\ts2\n"
+                "otu_a\t3\t0\n"
+                "otu_b\t1\t4\n",
+                encoding="utf-8",
+            )
+
+            builder = MGM2DatasetBuilder(str(embedding_path), embedding_dim=3)
+            builder.load_ntv3_embeddings()
+            builder.process_otu_table(
+                str(table_path),
+                str(output_path),
+                input_format="tsv",
+            )
+
+            with open(output_path, "rb") as handle:
+                payload = pickle.load(handle)
+
+            self.assertEqual("mgm2_v1", payload["format_version"])
+            self.assertNotIn("labels", payload)
+            self.assertNotIn("label_names", payload)
+            self.assertNotIn("label_column", payload)
+            self.assertEqual(["s1", "s2"], payload["samples"])
+
+    def test_build_dataset_h5_key_uses_ntv3_or_taxonomy_fallback_embeddings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            ntv3_path = tmpdir / "ntv3.h5"
+            fallback_path = tmpdir / "fallback.h5"
+            h5_path = tmpdir / "abundance.h5"
+            output_path = tmpdir / "dataset.pkl"
+            resolved_embedding_path = tmpdir / "resolved_embeddings.h5"
+
+            with h5py.File(ntv3_path, "w") as handle:
+                handle.create_dataset("embeddings", data=np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32))
+                handle.create_dataset("otu_ids", data=np.array([b"otu_direct", b"other"]))
+
+            with h5py.File(fallback_path, "w") as handle:
+                dt = h5py.string_dtype("utf-8")
+                handle.create_dataset("taxon_keys", data=np.array(["phylum|Archaea;Euryarchaeota"], dtype=object), dtype=dt)
+                handle.create_dataset("taxon_embeddings", data=np.array([[0.5, 0.5]], dtype=np.float32))
+                handle.create_dataset("global_embedding", data=np.array([0.25, 0.25], dtype=np.float32))
+
+            with h5py.File(h5_path, "w") as handle:
+                group = handle.create_group("genus")
+                group.create_dataset("axis0", data=np.array([b"s1", b"s2"]))
+                group.create_dataset(
+                    "axis1",
+                    data=np.array([
+                        b"otu_direct",
+                        b"sk__Archaea;p__Euryarchaeota;c__Methanobacteria",
+                    ]),
+                )
+                group.create_dataset(
+                    "block0_values",
+                    data=np.array([[3.0, 0.0], [1.0, 4.0]], dtype=np.float32),
+                )
+
+            builder = MGM2DatasetBuilder(
+                str(ntv3_path),
+                embedding_dim=2,
+                fallback_embedding_path=str(fallback_path),
+                resolved_embedding_path=str(resolved_embedding_path),
+            )
+            builder.load_ntv3_embeddings()
+            builder.process_otu_table(str(h5_path), str(output_path), input_format="h5", h5_key="genus")
+
+            with open(output_path, "rb") as handle:
+                payload = pickle.load(handle)
+            with h5py.File(resolved_embedding_path, "r") as handle:
+                resolved_ids = [value.decode("utf-8") for value in handle["otu_ids"][:]]
+                resolved_embeddings = handle["embeddings"][:]
+
+            self.assertEqual(["otu_direct", "sk__Archaea;p__Euryarchaeota;c__Methanobacteria"], resolved_ids)
+            self.assertTrue(np.allclose(resolved_embeddings[0], np.array([1.0, 0.0], dtype=np.float32)))
+            self.assertTrue(np.allclose(resolved_embeddings[1], np.array([0.5, 0.5], dtype=np.float32)))
+            self.assertEqual(str(resolved_embedding_path), payload["ntv3_embedding_path"])
+            self.assertEqual([-1, 0, 1], payload["otu_data"]["s1"]["input_ids"].tolist())
+            self.assertEqual({"ntv3": 1, "fallback:phylum": 1}, payload["embedding_resolution"]["source_counts"])
 
     def test_embedding_eval_selects_requested_sample_embedding_strategy(self):
         module_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_embeddings.py"

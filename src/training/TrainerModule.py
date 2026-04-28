@@ -5,6 +5,7 @@ Training logic for masked abundance modeling with optional CLS-to-Qwen3 alignmen
 """
 
 import logging
+import math
 from pathlib import Path
 from typing import Dict
 
@@ -139,11 +140,17 @@ class MGM2LightningModule(pl.LightningModule):
             lr=self.config.training.learning_rate,
             weight_decay=self.config.training.weight_decay,
         )
-        scheduler = torch.optim.lr_scheduler.LinearLR(
-            optimizer,
-            start_factor=0.1,
-            total_iters=self.config.training.warmup_steps,
-        )
+
+        scheduler_name = getattr(self.config.training, 'lr_scheduler', 'warmup_cosine')
+        if scheduler_name == 'constant':
+            return optimizer
+        if scheduler_name == 'linear_warmup':
+            scheduler = self._build_linear_warmup_scheduler(optimizer)
+        elif scheduler_name == 'warmup_cosine':
+            scheduler = self._build_warmup_cosine_scheduler(optimizer)
+        else:
+            raise ValueError(f'Unsupported lr_scheduler: {scheduler_name}')
+
         return {
             'optimizer': optimizer,
             'lr_scheduler': {
@@ -151,6 +158,46 @@ class MGM2LightningModule(pl.LightningModule):
                 'interval': 'step',
             },
         }
+
+    def _build_linear_warmup_scheduler(self, optimizer: torch.optim.Optimizer):
+        warmup_steps = int(getattr(self.config.training, 'warmup_steps', 0))
+        if warmup_steps <= 0:
+            return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1.0)
+        return torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=0.1,
+            total_iters=warmup_steps,
+        )
+
+    def _build_warmup_cosine_scheduler(self, optimizer: torch.optim.Optimizer):
+        total_steps = self._infer_total_training_steps()
+        lr_lambda = self._build_warmup_cosine_lr_lambda(total_steps)
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+    def _infer_total_training_steps(self) -> int:
+        warmup_steps = int(getattr(self.config.training, 'warmup_steps', 0))
+        try:
+            estimated_steps = int(self.trainer.estimated_stepping_batches)
+        except (AttributeError, RuntimeError, TypeError):
+            estimated_steps = 0
+        return max(estimated_steps, warmup_steps + 1, 1)
+
+    def _build_warmup_cosine_lr_lambda(self, total_steps: int):
+        warmup_steps = int(getattr(self.config.training, 'warmup_steps', 0))
+        min_lr_ratio = float(getattr(self.config.training, 'min_lr_ratio', 0.1))
+        total_steps = max(int(total_steps), warmup_steps + 1, 1)
+
+        def lr_lambda(current_step: int) -> float:
+            if warmup_steps > 0 and current_step < warmup_steps:
+                warmup_progress = current_step / float(warmup_steps)
+                return 0.1 + 0.9 * warmup_progress
+
+            decay_steps = max(total_steps - warmup_steps, 1)
+            decay_progress = min(max((current_step - warmup_steps) / float(decay_steps), 0.0), 1.0)
+            cosine_factor = 0.5 * (1.0 + math.cos(math.pi * decay_progress))
+            return min_lr_ratio + (1.0 - min_lr_ratio) * cosine_factor
+
+        return lr_lambda
 
     def on_train_start(self):
         logger.info(f'Starting training: {self.config.experiment_name}')

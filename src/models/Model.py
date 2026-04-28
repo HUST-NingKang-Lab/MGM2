@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 
 from .BaseModel import BaseModel
-from .Heads import AbundanceBinHead, Qwen3AlignmentHead, RegressionHead
+from .Heads import AbundanceBinHead, ClassificationHead, Qwen3AlignmentHead, RegressionHead
 
 
 class MGM2Model(nn.Module):
@@ -23,6 +23,7 @@ class MGM2Model(nn.Module):
         enable_regression: bool = True,
         enable_qwen3_alignment: bool = False,
         qwen3_projection_dim: Optional[int] = None,
+        classification_num_classes: Optional[int] = None,
         mlp_dropout: float = 0.1,
     ):
         super().__init__()
@@ -55,6 +56,7 @@ class MGM2Model(nn.Module):
         self.enable_qwen3_alignment = enable_qwen3_alignment
         self.num_bins = num_bins
         self.qwen3_projection_dim = qwen3_projection_dim or config.get('qwen3_projection_dim')
+        self.classification_num_classes = classification_num_classes or config.get('classification_num_classes')
 
         self.bin_head = AbundanceBinHead(
             hidden_size=self.hidden_size,
@@ -72,6 +74,12 @@ class MGM2Model(nn.Module):
             self.qwen3_alignment_head = Qwen3AlignmentHead(
                 hidden_size=self.hidden_size,
                 output_dim=self.qwen3_projection_dim,
+                dropout=mlp_dropout,
+            )
+        if self.classification_num_classes is not None:
+            self.classification_head = ClassificationHead(
+                hidden_size=self.hidden_size,
+                num_classes=int(self.classification_num_classes),
                 dropout=mlp_dropout,
             )
 
@@ -104,6 +112,8 @@ class MGM2Model(nn.Module):
             outputs['regression_preds'] = self.regression_head(hidden_states)
         if self.enable_qwen3_alignment:
             outputs['qwen3_proj'] = self.qwen3_alignment_head(cls_hidden)
+        if self.classification_num_classes is not None:
+            outputs['classification_logits'] = self.classification_head(cls_hidden)
 
         if any([bin_labels is not None, regression_targets is not None]):
             loss_dict = self.compute_losses(

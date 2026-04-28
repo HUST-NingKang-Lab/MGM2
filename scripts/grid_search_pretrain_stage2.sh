@@ -9,6 +9,7 @@ set -euo pipefail
 #   bash scripts/grid_search_pretrain_stage2.sh
 
 BASE_CONFIG="outputs_grid/stage1/REPLACE_WITH_BEST_RUN/config.json"
+REUSE_SMALL_FROM_BASE_CONFIG=true
 DATA_FILE="data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.mgm2v1.pkl"
 NTV3_EMBEDDING_PATH="ntv3_embeddings/otus_99_embeddings.h5"
 QWEN3_EMBEDDING_PATH="qwen3_embeddings/microbeatlas_keywords_emb.h5"
@@ -54,6 +55,31 @@ for preset in "${PRESETS[@]}"; do
   metrics_csv="${run_dir}/logs/${run_name}/version_0/metrics.csv"
 
   mkdir -p "${run_dir}"
+
+  if [[ "${preset_name}" == "scale_small" && "${REUSE_SMALL_FROM_BASE_CONFIG}" == true ]]; then
+    base_run_dir="$(dirname "${BASE_CONFIG}")"
+    echo "Reusing small model result from ${base_run_dir}"
+    cp "${BASE_CONFIG}" "${config_path}"
+    if [[ -d "${base_run_dir}/checkpoints" ]]; then
+      mkdir -p "${run_dir}/checkpoints"
+      cp -a "${base_run_dir}/checkpoints/." "${run_dir}/checkpoints/"
+    fi
+    if [[ -d "${base_run_dir}/logs" ]]; then
+      mkdir -p "${run_dir}/logs"
+      cp -a "${base_run_dir}/logs/." "${run_dir}/logs/"
+    fi
+    if [[ -f "${base_run_dir}/train.log" ]]; then
+      cp "${base_run_dir}/train.log" "${run_dir}/train.log"
+    fi
+    metrics_csv="$(find "${run_dir}/logs" -path '*/version_*/metrics.csv' -type f | sort -V | tail -n 1)"
+    if [[ -z "${metrics_csv}" ]]; then
+      echo "Could not find copied metrics.csv for ${preset_name}" >&2
+      exit 1
+    fi
+    python scripts/summarize_grid_results.py     --metrics_csv "${metrics_csv}"     --summary_csv "${SUMMARY_CSV}"     --run_name "${preset_name}"     --output_dir "${run_dir}"     --config_json "${config_path}"     --checkpoint_dir "${run_dir}/checkpoints"
+    continue
+  fi
+
   python scripts/build_grid_config.py     --base "${BASE_CONFIG}"     --output "${config_path}"     --set model.hidden_size="${hidden_size}"     --set model.num_hidden_layers="${num_hidden_layers}"     --set model.num_attention_heads="${num_attention_heads}"     --set model.intermediate_size="${intermediate_size}"
 
   pretrain_cmd=(

@@ -10,16 +10,16 @@ set -euo pipefail
 # Example:
 #   bash scripts/grid_search_pretrain_stage1.sh
 
-DATA_FILE="data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.mgm2v1.pkl"
+DATA_FILE="data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.mgm2v1.768.pkl"
 NTV3_EMBEDDING_PATH="ntv3_embeddings/otus_99_embeddings.h5"
 QWEN3_EMBEDDING_PATH="qwen3_embeddings/microbeatlas_keywords_emb.h5"
 BASE_CONFIG="src/configs/mgm2_default.json"
 OUTPUT_ROOT="outputs_grid/stage1"
 RUN_GROUP="$(date +%Y%m%d_%H%M%S)"
 MAX_EPOCHS=100
-BATCH_SIZE=32
-NUM_WORKERS=4
-DEVICES=(6 7)
+BATCH_SIZE=1024
+NUM_WORKERS=8
+DEVICES=(2 3 4 5)
 EXPERIMENT_PREFIX="stage1_pretrain"
 
 LEARNING_RATES=(1e-4 5e-5)

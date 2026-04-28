@@ -83,6 +83,8 @@ class TrainingConfig:
     learning_rate: float = 1e-4
     weight_decay: float = 0.01
     warmup_steps: int = 1000
+    lr_scheduler: str = 'warmup_cosine'
+    min_lr_ratio: float = 0.1
     max_epochs: int = 100
     gradient_clip_val: float = 1.0
     precision: str = 'bf16'
@@ -100,6 +102,12 @@ class TrainingConfig:
             raise ValueError('val_ratio must be between 0 and 1')
         if self.train_ratio + self.val_ratio > 1.0:
             raise ValueError('train_ratio + val_ratio must be less than or equal to 1.0')
+        if self.warmup_steps < 0:
+            raise ValueError('warmup_steps must be non-negative')
+        if self.lr_scheduler not in {'warmup_cosine', 'linear_warmup', 'constant'}:
+            raise ValueError('lr_scheduler must be warmup_cosine, linear_warmup, or constant')
+        if not 0.0 <= self.min_lr_ratio <= 1.0:
+            raise ValueError('min_lr_ratio must be between 0 and 1')
 
 
 @dataclass

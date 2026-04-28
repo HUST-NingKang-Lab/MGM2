@@ -373,6 +373,19 @@ def main():
     embedding_df.insert(0, 'sample_id', ordered_sample_ids)
     embedding_df.to_csv(args.output_dir / 'embedding_table.csv', index=False)
     (args.output_dir / 'metrics.json').write_text(json.dumps(metrics, indent=2, ensure_ascii=False))
+    
+    # only keep aquatic, animal, soil, plant labels for visualization to avoid clutter; metrics are computed on all labels
+    # if labels contain more than one of the keywords, repeat the sample with each label for visualization purposes
+    embedding_df_vis = embedding_df.copy()
+    embedding_df_vis['label'] = embedding_df_vis['label'].str.lower()
+    embedding_df_vis = embedding_df_vis[embedding_df_vis['label'].str.contains('|'.join(LABEL_KEYWORDS))].copy()
+    embedding_df_vis['label'] = embedding_df_vis['label'].apply(lambda value: next((keyword for keyword in LABEL_KEYWORDS if keyword in value), 'other'))
+    embeddings_vis = embedding_df_vis.drop(columns=['sample_id', 'label']).values.astype(np.float32)
+    labels_vis = embedding_df_vis['label'].tolist()
+    # sample 1000 for each label for visualization to avoid overcrowding the plots; if a label has fewer than 1000 samples, use all of them
+    embedding_df = embedding_df_vis.groupby('label').apply(lambda df: df.sample(n=min(len(df), 1000), random_state=42)).reset_index(drop=True)
+    embeddings = embedding_df.drop(columns=['sample_id', 'label']).values.astype(np.float32)
+    labels = embedding_df['label'].tolist()
 
     if embeddings.shape[0] >= 2:
         logger.info('Saving PCA visualization')

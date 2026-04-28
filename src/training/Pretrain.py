@@ -188,7 +188,7 @@ def create_callbacks(config):
 
     early_stop_callback = EarlyStopping(
         monitor='val/total_loss',
-        patience=10,
+        patience=5,
         mode='min',
         verbose=True,
     )

@@ -13,7 +13,7 @@ env/
 .claude/
 
 # Large data and model artifacts
-data/
+/data/
 ntv3_embeddings/
 qwen3_embeddings/
 checkpoints/
