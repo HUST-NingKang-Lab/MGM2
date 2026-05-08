@@ -8,23 +8,23 @@ set -euo pipefail
 # Example:
 #   bash scripts/grid_search_pretrain_stage2.sh
 
-BASE_CONFIG="outputs_grid/stage1/REPLACE_WITH_BEST_RUN/config.json"
+BASE_CONFIG="outputs_grid/stage1/20260426_230440/run_005_lr5e-5_wd0.01_mask0.15_reg0.3_qw0.1/config.json"
 REUSE_SMALL_FROM_BASE_CONFIG=true
-DATA_FILE="data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.mgm2v1.pkl"
+DATA_FILE="data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.mgm2v1.768.pkl"
 NTV3_EMBEDDING_PATH="ntv3_embeddings/otus_99_embeddings.h5"
 QWEN3_EMBEDDING_PATH="qwen3_embeddings/microbeatlas_keywords_emb.h5"
 OUTPUT_ROOT="outputs_grid/stage2"
 RUN_GROUP="$(date +%Y%m%d_%H%M%S)"
 MAX_EPOCHS=50
 NUM_WORKERS=4
-DEVICES=(6 7)
+DEVICES=(1 2 3 4)
 EXPERIMENT_PREFIX="stage2_scale"
 
 PRESETS=(
   "scale_small|224|6|4|896|1024"
-  "scale_medium|320|6|5|1280|640"
-  "scale_large|384|8|6|1536|384"
-  "scale_xlarge|512|10|8|2048|256"
+  "scale_medium|320|6|5|1280|512"
+  "scale_large|384|8|6|1536|512"
+  "scale_xlarge|512|10|8|2048|512"
 )
 
 for required in "$BASE_CONFIG" "$DATA_FILE" "$NTV3_EMBEDDING_PATH"; do
