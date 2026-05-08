@@ -11,13 +11,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "${REPO_ROOT}"
 
-INPUT_DIR="/data6/zhanghaohong/projects/MGM2Benchmarks/MGnify_mst/expert"
+INPUT_DIR="/data9/zhanghaohong/projects/MGM2Benchmarks/MGnify_mst/expert"
 OUTPUT_DIR="data/downstreams/MGnify_mst"
 
 NTV3_EMBEDDING="ntv3_embeddings/otus_99_embeddings.h5"
 FALLBACK_EMBEDDING="ntv3_embeddings/otus_99_taxonomy_fallback.h5"
 H5_KEY="genus"
-TOP_K_OTUS=0
+TOP_K_OTUS=768
+H5_LOAD_ALL=true
 
 TRAIN_INPUT="${INPUT_DIR}/train_inputs.h5_raw.h5"
 TEST_INPUT="${INPUT_DIR}/test_inputs.h5_raw.h5"
@@ -39,12 +40,19 @@ build_split() {
     echo "  input: ${input_file}"
     echo "  output: ${output_file}"
     echo "  resolved_embedding: ${resolved_embedding}"
+    echo "  h5_load_all: ${H5_LOAD_ALL}"
     echo "  log: ${log_file}"
+
+    local h5_load_all_args=()
+    if [[ "${H5_LOAD_ALL}" == "true" ]]; then
+        h5_load_all_args+=(--h5_load_all)
+    fi
 
     python -u src/data/build_dataset.py \
         --otu_table "${input_file}" \
         --format h5 \
         --h5_key "${H5_KEY}" \
+        "${h5_load_all_args[@]}" \
         --ntv3_embedding "${NTV3_EMBEDDING}" \
         --fallback_embedding "${FALLBACK_EMBEDDING}" \
         --resolved_embedding "${resolved_embedding}" \

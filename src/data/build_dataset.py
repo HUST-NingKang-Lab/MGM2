@@ -261,13 +261,14 @@ class MGM2DatasetBuilder:
         output_path: str,
         input_format: str = 'csv',
         h5_key: str = 'genus',
+        h5_load_all: bool = False,
     ):
         """Process an OTU table and build an MGM2 pretraining dataset."""
         logger.info(f'Processing OTU table from {otu_table_path} (format: {input_format})')
         if input_format == 'biom':
             self._process_biom_table(otu_table_path, output_path)
         elif input_format == 'h5':
-            self._process_h5_table(otu_table_path, output_path, h5_key)
+            self._process_h5_table(otu_table_path, output_path, h5_key, h5_load_all=h5_load_all)
         else:
             sep = '\t' if input_format == 'tsv' else ','
             self._process_delimited_table(otu_table_path, output_path, sep)
@@ -343,24 +344,37 @@ class MGM2DatasetBuilder:
         otu_table_path: str,
         output_path: str,
         h5_key: str,
+        h5_load_all: bool = False,
     ):
         with h5py.File(otu_table_path, 'r') as f:
             group = f[h5_key]
             feature_ids = self._decode_h5_strings(group['axis1'][:])
             sample_ids = self._decode_h5_strings(group['axis0'][:])
-            values = group['block0_values']
-            if values.shape != (len(feature_ids), len(sample_ids)):
+            values_dataset = group['block0_values']
+            if values_dataset.shape != (len(feature_ids), len(sample_ids)):
                 raise ValueError(
                     f'Expected {h5_key}/block0_values shape '
-                    f'({len(feature_ids)}, {len(sample_ids)}), got {values.shape}'
+                    f'({len(feature_ids)}, {len(sample_ids)}), got {values_dataset.shape}'
                 )
 
             self._prepare_feature_index(feature_ids, output_path)
+            if h5_load_all:
+                logger.info(
+                    'Loading full HDF5 abundance matrix into memory: '
+                    f'{values_dataset.shape[0]:,} features x {values_dataset.shape[1]:,} samples'
+                )
+                values = np.asarray(values_dataset[:], dtype=np.float32)
+                logger.info(f'Loaded HDF5 matrix into memory: {values.nbytes / 1024 / 1024 / 1024:.2f} GB')
+                col_sums = values.sum(axis=0, dtype=np.float64)
+            else:
+                values = values_dataset
+                col_sums = None
+
             all_samples: List[str] = []
             otu_data: Dict[str, Dict[str, np.ndarray]] = {}
             for sample_idx, sample_id in enumerate(tqdm(sample_ids, total=len(sample_ids))):
                 abundances = np.asarray(values[:, sample_idx], dtype=np.float32)
-                total = float(abundances.sum())
+                total = float(col_sums[sample_idx]) if col_sums is not None else float(abundances.sum())
                 if total > 0:
                     abundances = abundances / total
                 sample_data = self.build_sample(feature_ids, abundances)
@@ -371,6 +385,7 @@ class MGM2DatasetBuilder:
         self._validate_non_empty_samples(all_samples, output_path)
         dataset = self._build_dataset_payload(all_samples, otu_data)
         dataset['preprocessing']['h5_key'] = h5_key
+        dataset['preprocessing']['h5_load_all'] = h5_load_all
         self._save_dataset(dataset, output_path, all_samples, otu_data)
 
     def _process_biom_table(
@@ -482,6 +497,11 @@ def main():
     )
     parser.add_argument('--h5_key', type=str, default='genus', help='HDF5 group key when --format h5')
     parser.add_argument(
+        '--h5_load_all',
+        action='store_true',
+        help='Load the whole HDF5 block0_values matrix into memory before iterating samples; faster but memory intensive.',
+    )
+    parser.add_argument(
         '--ntv3_embedding',
         type=str,
         default='ntv3_embeddings/otus_99_embeddings.h5',
@@ -534,6 +554,7 @@ def main():
         args.output,
         input_format=input_format,
         h5_key=args.h5_key,
+        h5_load_all=args.h5_load_all,
     )
 
 
