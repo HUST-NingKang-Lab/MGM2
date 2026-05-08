@@ -20,12 +20,19 @@ import torch
 from src.configs.Config import MGM2Config
 from src.data.build_dataset import MGM2DatasetBuilder
 from src.data.Dataset import BatchCollatorMGM2, MicrobiomeDatasetMGM2, create_dataloaders_mgm2
+from src.data.CommunityClassificationDataset import (
+    CommunityClassificationDataset,
+    create_community_classification_dataloaders,
+    create_community_classification_test_loader,
+    stratified_split_sample_ids,
+)
 from src.data.Preprocessing import AbundancePreprocessor, BinManager
 from src.data.utils import load_ntv3_embeddings, load_preprocessed_data
 from src.losses.MultiTaskLoss import MGM2MultiTaskLoss
-from src.models import ClassificationHead, MGM2Model
+from src.models import ClassificationHead, MGM2CommunityClassificationModel, MGM2Model
 from src.models.BaseModel import BaseModel
 from src.training.TrainerModule import MGM2LightningModule
+from src.training.CommunityClassificationModule import CommunityClassificationModule
 
 
 class MGM2RegressionTests(unittest.TestCase):
@@ -815,7 +822,7 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertIn("qwen3_proj", aligned_outputs)
         self.assertEqual((1, 6), tuple(aligned_outputs["qwen3_proj"].shape))
 
-    def test_model_exposes_optional_classification_logits(self):
+    def test_pretrain_model_does_not_expose_downstream_classification_head(self):
         model_config = {
             "embedding_dim": 4,
             "hidden_size": 8,
@@ -828,7 +835,6 @@ class MGM2RegressionTests(unittest.TestCase):
             config=model_config,
             num_bins=5,
             enable_regression=False,
-            classification_num_classes=3,
         )
         outputs = model(
             input_ids=torch.tensor([[-1, 0, 1], [-1, 1, 0]]),
@@ -837,8 +843,329 @@ class MGM2RegressionTests(unittest.TestCase):
             attention_mask=torch.tensor([[1, 1, 1], [1, 1, 1]]),
         )
 
-        self.assertIsInstance(model.classification_head, ClassificationHead)
-        self.assertEqual((2, 3), tuple(outputs["classification_logits"].shape))
+        self.assertFalse(hasattr(model, "classification_head"))
+        self.assertNotIn("classification_logits", outputs)
+
+    def test_community_classification_model_is_separate_from_pretrain_model(self):
+        model_config = {
+            "embedding_dim": 4,
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "max_position_embeddings": 16,
+        }
+        model = MGM2Model(
+            config=model_config,
+            num_bins=5,
+            enable_regression=False,
+        )
+        classifier = MGM2CommunityClassificationModel(
+            config=model_config,
+            num_classes=3,
+        )
+        classifier.load_pretrained_backbone(model)
+        outputs = model(
+            input_ids=torch.tensor([[-1, 0, 1], [-1, 1, 0]]),
+            embeddings=torch.randn(2, 3, 4),
+            abundance_values=torch.randn(2, 3),
+            attention_mask=torch.tensor([[1, 1, 1], [1, 1, 1]]),
+        )
+        classifier_outputs = classifier(
+            input_ids=torch.tensor([[-1, 0, 1], [-1, 1, 0]]),
+            embeddings=torch.randn(2, 3, 4),
+            abundance_values=torch.randn(2, 3),
+            attention_mask=torch.tensor([[1, 1, 1], [1, 1, 1]]),
+            labels=torch.tensor([0, 2]),
+        )
+
+        self.assertNotIn("classification_logits", outputs)
+        self.assertIsInstance(classifier.classification_head, ClassificationHead)
+        self.assertEqual("mean_pool", classifier.pooling_mode)
+        self.assertEqual((2, 3), tuple(classifier_outputs["classification_logits"].shape))
+        self.assertEqual((), tuple(classifier_outputs["loss"].shape))
+
+    def test_community_classification_model_mean_pooling_includes_cls_and_excludes_padding(self):
+        model_config = {
+            "embedding_dim": 4,
+            "hidden_size": 2,
+            "intermediate_size": 8,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 1,
+            "max_position_embeddings": 8,
+        }
+        classifier = MGM2CommunityClassificationModel(
+            config=model_config,
+            num_classes=2,
+        )
+
+        class FakeBackbone(torch.nn.Module):
+            def forward(self, **kwargs):
+                hidden_states = torch.tensor([[[10.0, 10.0], [1.0, 3.0], [5.0, 7.0], [99.0, 99.0]]])
+                return {"last_hidden_state": hidden_states}
+
+        classifier.backbone = FakeBackbone()
+        outputs = classifier(
+            input_ids=torch.tensor([[-1, 0, 1, 2]]),
+            embeddings=torch.zeros(1, 4, 4),
+            abundance_values=torch.zeros(1, 4),
+            attention_mask=torch.tensor([[1, 1, 1, 0]]),
+        )
+
+        self.assertTrue(torch.allclose(outputs["pooled_hidden"], torch.tensor([[16.0 / 3.0, 20.0 / 3.0]])))
+        self.assertFalse(torch.allclose(outputs["pooled_hidden"], outputs["cls_hidden"]))
+
+    def test_community_classification_model_cls_pooling_uses_cls_hidden(self):
+        model_config = {
+            "embedding_dim": 4,
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "max_position_embeddings": 16,
+        }
+        classifier = MGM2CommunityClassificationModel(
+            config=model_config,
+            num_classes=3,
+            pooling_mode="cls",
+        )
+        outputs = classifier(
+            input_ids=torch.tensor([[-1, 0, 1], [-1, 1, 0]]),
+            embeddings=torch.randn(2, 3, 4),
+            abundance_values=torch.randn(2, 3),
+            attention_mask=torch.tensor([[1, 1, 1], [1, 1, 1]]),
+        )
+
+        self.assertEqual("cls", classifier.pooling_mode)
+        self.assertTrue(torch.allclose(outputs["pooled_hidden"], outputs["cls_hidden"]))
+
+    def test_community_classification_model_rejects_unknown_pooling_mode(self):
+        model_config = {
+            "embedding_dim": 4,
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "max_position_embeddings": 16,
+        }
+
+        with self.assertRaisesRegex(ValueError, "pooling_mode"):
+            MGM2CommunityClassificationModel(
+                config=model_config,
+                num_classes=3,
+                pooling_mode="max",
+            )
+
+    def test_community_classification_dataset_returns_labels_without_masking(self):
+        tmpdir, data, preprocessor, manager = self._build_dataset_components()
+        self.addCleanup(tmpdir.cleanup)
+
+        dataset = CommunityClassificationDataset(
+            preprocessed_data=data,
+            labels_by_sample={"s1": 2},
+            abundance_preprocessor=preprocessor,
+            bin_manager=manager,
+            ntv3_embedding_path=data["ntv3_embedding_path"],
+        )
+        sample = dataset[0]
+
+        self.assertEqual(2, int(sample["labels"]))
+        self.assertTrue((sample["bin_labels"] != -100).all())
+
+    def test_stratified_split_sample_ids_preserves_label_groups(self):
+        sample_ids = [f"a{i}" for i in range(6)] + [f"b{i}" for i in range(4)] + ["rare"]
+        labels_by_sample = {sample_id: ("a" if sample_id.startswith("a") else "b") for sample_id in sample_ids}
+        labels_by_sample["rare"] = "rare"
+
+        train_ids, val_ids = stratified_split_sample_ids(
+            sample_ids=sample_ids,
+            labels_by_sample=labels_by_sample,
+            val_ratio=0.3,
+            seed=7,
+        )
+
+        self.assertEqual(set(sample_ids), set(train_ids) | set(val_ids))
+        self.assertTrue(set(train_ids).isdisjoint(val_ids))
+        self.assertEqual(2, sum(labels_by_sample[sample_id] == "a" for sample_id in val_ids))
+        self.assertEqual(1, sum(labels_by_sample[sample_id] == "b" for sample_id in val_ids))
+        self.assertIn("rare", train_ids)
+
+    def test_community_classification_dataloaders_use_metadata_stratified_split(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            data_path = tmpdir / "dataset.pkl"
+            embedding_path = tmpdir / "embeddings.h5"
+            metadata_path = tmpdir / "metadata.tsv"
+            self._create_embedding_file(embedding_path, ["otu_a", "otu_b"], embedding_dim=4)
+            self._create_preprocessed_dataset_file(data_path, sample_count=10)
+            metadata_path.write_text(
+                "sample_id\tlabel\n"
+                "sample_0\ta\nsample_1\ta\nsample_2\ta\nsample_3\ta\nsample_4\ta\nsample_5\ta\n"
+                "sample_6\tb\nsample_7\tb\nsample_8\tb\nsample_9\tb\n",
+                encoding="utf-8",
+            )
+
+            train_loader, val_loader, label_to_id = create_community_classification_dataloaders(
+                data_path=data_path,
+                metadata_path=metadata_path,
+                ntv3_embedding_path=embedding_path,
+                abundance_bin_config=MGM2Config().abundance.__dict__,
+                batch_size=2,
+                num_workers=0,
+                sample_id_column="sample_id",
+                label_column="label",
+                val_ratio=0.3,
+                seed=42,
+            )
+
+            self.assertEqual({"a": 0, "b": 1, "unknown": 2}, label_to_id)
+            self.assertEqual(7, len(train_loader.dataset))
+            self.assertEqual(3, len(val_loader.dataset))
+            val_labels = [int(val_loader.dataset[idx]["labels"]) for idx in range(len(val_loader.dataset))]
+            self.assertEqual(2, val_labels.count(label_to_id["a"]))
+            self.assertEqual(1, val_labels.count(label_to_id["b"]))
+            batch = next(iter(train_loader))
+            self.assertEqual((2,), tuple(batch["labels"].shape))
+
+    def test_community_classification_test_loader_maps_unseen_labels_to_unknown(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            train_data_path = tmpdir / "train.pkl"
+            test_data_path = tmpdir / "test.pkl"
+            embedding_path = tmpdir / "embeddings.h5"
+            train_metadata_path = tmpdir / "train_metadata.tsv"
+            test_metadata_path = tmpdir / "test_metadata.tsv"
+            self._create_embedding_file(embedding_path, ["otu_a", "otu_b"], embedding_dim=4)
+            self._create_preprocessed_dataset_file(train_data_path, sample_count=6)
+            self._create_preprocessed_dataset_file(test_data_path, sample_count=2)
+            train_metadata_path.write_text(
+                "sample_id\tlabel\n"
+                "sample_0\ta\nsample_1\ta\nsample_2\ta\nsample_3\tb\nsample_4\tb\nsample_5\tb\n",
+                encoding="utf-8",
+            )
+            test_metadata_path.write_text(
+                "sample_id\tlabel\n"
+                "sample_0\tTunicates\nsample_1\ta\n",
+                encoding="utf-8",
+            )
+
+            train_loader, _, label_to_id = create_community_classification_dataloaders(
+                data_path=train_data_path,
+                metadata_path=train_metadata_path,
+                ntv3_embedding_path=embedding_path,
+                abundance_bin_config=MGM2Config().abundance.__dict__,
+                batch_size=2,
+                num_workers=0,
+                sample_id_column="sample_id",
+                label_column="label",
+                val_ratio=0.2,
+                seed=42,
+            )
+            test_loader = create_community_classification_test_loader(
+                data_path=test_data_path,
+                metadata_path=test_metadata_path,
+                ntv3_embedding_path=embedding_path,
+                abundance_bin_config=MGM2Config().abundance.__dict__,
+                label_to_id=label_to_id,
+                batch_size=2,
+                num_workers=0,
+                sample_id_column="sample_id",
+                label_column="label",
+                abundance_preprocessor=train_loader.dataset.abundance_preprocessor,
+                bin_manager=train_loader.dataset.bin_manager,
+            )
+
+            self.assertIn("unknown", label_to_id)
+            labels = [int(test_loader.dataset[idx]["labels"]) for idx in range(len(test_loader.dataset))]
+            self.assertEqual([label_to_id["unknown"], label_to_id["a"]], labels)
+
+    def test_community_classification_prediction_table_saves_per_class_scores(self):
+        module_path = Path(__file__).resolve().parents[1] / "src" / "training" / "CommunityClassification.py"
+        spec = importlib.util.spec_from_file_location("community_classification", module_path)
+        community_classification = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(community_classification)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "predictions.csv"
+            community_classification.save_prediction_table(
+                [
+                    {
+                        "sample_id": ["s1"],
+                        "label_id": torch.tensor([1]),
+                        "pred_id": torch.tensor([0]),
+                        "probability": torch.tensor([0.7]),
+                        "logits": torch.tensor([[2.0, 0.5]]),
+                        "probabilities": torch.tensor([[0.7, 0.3]]),
+                    }
+                ],
+                ["soil", "unknown"],
+                output_path,
+            )
+            prediction_table = pd.read_csv(output_path)
+
+        self.assertIn("logit_0_soil", prediction_table.columns)
+        self.assertIn("logit_1_unknown", prediction_table.columns)
+        self.assertIn("prob_0_soil", prediction_table.columns)
+        self.assertIn("prob_1_unknown", prediction_table.columns)
+        self.assertAlmostEqual(2.0, prediction_table.loc[0, "logit_0_soil"])
+        self.assertAlmostEqual(0.3, prediction_table.loc[0, "prob_1_unknown"])
+
+    def test_community_classification_module_logs_loss_and_accuracy(self):
+        config = MGM2Config()
+        config.model.embedding_dim = 4
+        config.model.hidden_size = 8
+        config.model.intermediate_size = 16
+        config.model.num_hidden_layers = 1
+        config.model.num_attention_heads = 2
+        config.model.max_position_embeddings = 16
+        module = CommunityClassificationModule(config=config, num_classes=3)
+        batch = {
+            "input_ids": torch.tensor([[-1, 0, 1], [-1, 1, 0]]),
+            "embeddings": torch.randn(2, 3, 4),
+            "abundance_values": torch.randn(2, 3),
+            "attention_mask": torch.ones(2, 3, dtype=torch.long),
+            "labels": torch.tensor([0, 2]),
+        }
+
+        loss = module.training_step(batch, 0)
+
+        self.assertEqual((), tuple(loss.shape))
+
+    def test_community_classification_entrypoint_exposes_metadata_arguments(self):
+        script_text = (Path(__file__).resolve().parents[1] / "src" / "training" / "CommunityClassification.py").read_text()
+
+        self.assertIn("--train_data_file", script_text)
+        self.assertIn("--train_metadata_file", script_text)
+        self.assertIn("--test_data_file", script_text)
+        self.assertIn("--test_metadata_file", script_text)
+        self.assertIn("--test_ntv3_embedding_path", script_text)
+        self.assertIn("--prediction_file", script_text)
+        self.assertIn("--pooling_mode", script_text)
+        self.assertIn("--sample_id_column", script_text)
+        self.assertIn("--label_column", script_text)
+        self.assertIn("create_community_classification_dataloaders", script_text)
+
+    def test_mgnify_mst_all_levels_training_script_runs_each_level_with_five_seeds(self):
+        script_path = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "downstreams"
+            / "MGnify_mst"
+            / "train_mgnify_mst_all_levels.sh"
+        )
+        script_text = script_path.read_text()
+
+        self.assertTrue(script_path.exists())
+        self.assertIn("LEVELS=(env_level_1 env_level_2 env_level_3 env_level_4 env_level_5)", script_text)
+        self.assertIn("SEEDS=(11 22 33 44 55)", script_text)
+        self.assertIn("src/training/CommunityClassification.py", script_text)
+        self.assertIn("--test_ntv3_embedding_path", script_text)
+        self.assertIn("--prediction_file", script_text)
+        self.assertIn("POOLING_MODE=", script_text)
+        self.assertIn("--pooling_mode", script_text)
+        self.assertIn("test_predictions.csv", script_text)
+        self.assertIn("train_meta_split.csv", script_text)
+        self.assertIn("test_meta_split.csv", script_text)
 
     def test_multitask_loss_returns_zero_alignment_loss_with_fewer_than_two_valid_pairs(self):
         criterion = MGM2MultiTaskLoss(
@@ -1162,9 +1489,9 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertIn("scale_large", script_text)
         self.assertIn("scale_xlarge", script_text)
         self.assertIn('"scale_small|224|6|4|896|1024"', script_text)
-        self.assertIn('"scale_medium|320|6|5|1280|640"', script_text)
-        self.assertIn('"scale_large|384|8|6|1536|384"', script_text)
-        self.assertIn('"scale_xlarge|512|10|8|2048|256"', script_text)
+        self.assertIn('"scale_medium|320|6|5|1280|512"', script_text)
+        self.assertIn('"scale_large|384|8|6|1536|512"', script_text)
+        self.assertIn('"scale_xlarge|512|10|8|2048|512"', script_text)
         self.assertIn('REUSE_SMALL_FROM_BASE_CONFIG=true', script_text)
         self.assertIn('if [[ "${preset_name}" == "scale_small"', script_text)
         self.assertIn('cp -a "${base_run_dir}/checkpoints/."', script_text)
@@ -1180,6 +1507,26 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertNotIn("for hidden_size in", script_text)
         self.assertNotIn("for num_hidden_layers in", script_text)
         self.assertNotIn("for num_attention_heads in", script_text)
+
+    def test_stage2_resume_script_resumes_existing_run_group(self):
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "resume_grid_search_pretrain_stage2_20260505_094404.sh"
+        script_text = script_path.read_text()
+
+        self.assertTrue(script_path.exists())
+        self.assertIn('STAGE_ROOT="outputs_grid/stage2/20260505_094404"', script_text)
+        self.assertIn('RESUME_FROM_PRESET="scale_large"', script_text)
+        self.assertIn('resume_started=false', script_text)
+        self.assertIn('before resume preset', script_text)
+        self.assertIn("summary_has_run", script_text)
+        self.assertIn("latest_metrics_csv", script_text)
+        self.assertIn('resume_ckpt="${run_dir}/checkpoints/last.ckpt"', script_text)
+        self.assertIn('--resume "${resume_ckpt}"', script_text)
+        self.assertIn("scale_small", script_text)
+        self.assertIn("scale_medium", script_text)
+        self.assertIn("scale_large", script_text)
+        self.assertIn("scale_xlarge", script_text)
+        self.assertIn("tee -a", script_text)
+        self.assertIn("src/training/Pretrain.py", script_text)
 
     def test_mgnify_mst_build_script_converts_train_and_test_without_labels(self):
         script_path = (
@@ -1199,6 +1546,7 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertIn("--format h5", script_text)
         self.assertIn('H5_KEY="genus"', script_text)
         self.assertIn('--h5_key "${H5_KEY}"', script_text)
+        self.assertIn("--h5_load_all", script_text)
         self.assertIn("train.pkl", script_text)
         self.assertIn("test.pkl", script_text)
         self.assertIn("train.resolved_embeddings.h5", script_text)
@@ -1447,6 +1795,40 @@ class MGM2RegressionTests(unittest.TestCase):
             self.assertEqual(str(resolved_embedding_path), payload["ntv3_embedding_path"])
             self.assertEqual([-1, 0, 1], payload["otu_data"]["s1"]["input_ids"].tolist())
             self.assertEqual({"ntv3": 1, "fallback:phylum": 1}, payload["embedding_resolution"]["source_counts"])
+
+    def test_build_dataset_h5_can_load_full_matrix_into_memory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir = Path(tmpdir)
+            embedding_path = tmpdir / "embeddings.h5"
+            h5_path = tmpdir / "abundance.h5"
+            output_path = tmpdir / "dataset.pkl"
+            self._create_embedding_file(embedding_path, ["otu_a", "otu_b"], embedding_dim=2)
+
+            with h5py.File(h5_path, "w") as handle:
+                group = handle.create_group("genus")
+                group.create_dataset("axis0", data=np.array([b"s1", b"s2"]))
+                group.create_dataset("axis1", data=np.array([b"otu_a", b"otu_b"]))
+                group.create_dataset(
+                    "block0_values",
+                    data=np.array([[3.0, 0.0], [1.0, 4.0]], dtype=np.float32),
+                )
+
+            builder = MGM2DatasetBuilder(str(embedding_path), embedding_dim=2)
+            builder.load_ntv3_embeddings()
+            builder.process_otu_table(
+                str(h5_path),
+                str(output_path),
+                input_format="h5",
+                h5_key="genus",
+                h5_load_all=True,
+            )
+
+            with open(output_path, "rb") as handle:
+                payload = pickle.load(handle)
+
+            self.assertTrue(payload["preprocessing"]["h5_load_all"])
+            self.assertTrue(np.allclose([0.0, 0.75, 0.25], payload["otu_data"]["s1"]["abundance_values"]))
+            self.assertTrue(np.allclose([0.0, 1.0], payload["otu_data"]["s2"]["abundance_values"]))
 
     def test_embedding_eval_selects_requested_sample_embedding_strategy(self):
         module_path = Path(__file__).resolve().parents[1] / "scripts" / "evaluate_embeddings.py"

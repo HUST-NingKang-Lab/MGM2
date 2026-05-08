@@ -402,6 +402,10 @@ class BatchCollatorMGM2:
                 padded_batch[key] = torch.stack([sample[key] for sample in batch])
             elif key == 'qwen3_alignment_mask':
                 padded_batch[key] = torch.stack([sample[key] for sample in batch])
+            elif key == 'labels':
+                padded_batch[key] = torch.stack([sample[key] for sample in batch])
+            elif key == 'sample_id':
+                padded_batch[key] = [sample[key] for sample in batch]
             elif key in ['abundance_values', 'regression_targets', 'embeddings']:
                 # Float tensors
                 if key == 'embeddings':

@@ -23,7 +23,6 @@ class MGM2Model(nn.Module):
         enable_regression: bool = True,
         enable_qwen3_alignment: bool = False,
         qwen3_projection_dim: Optional[int] = None,
-        classification_num_classes: Optional[int] = None,
         mlp_dropout: float = 0.1,
     ):
         super().__init__()
@@ -56,7 +55,6 @@ class MGM2Model(nn.Module):
         self.enable_qwen3_alignment = enable_qwen3_alignment
         self.num_bins = num_bins
         self.qwen3_projection_dim = qwen3_projection_dim or config.get('qwen3_projection_dim')
-        self.classification_num_classes = classification_num_classes or config.get('classification_num_classes')
 
         self.bin_head = AbundanceBinHead(
             hidden_size=self.hidden_size,
@@ -74,12 +72,6 @@ class MGM2Model(nn.Module):
             self.qwen3_alignment_head = Qwen3AlignmentHead(
                 hidden_size=self.hidden_size,
                 output_dim=self.qwen3_projection_dim,
-                dropout=mlp_dropout,
-            )
-        if self.classification_num_classes is not None:
-            self.classification_head = ClassificationHead(
-                hidden_size=self.hidden_size,
-                num_classes=int(self.classification_num_classes),
                 dropout=mlp_dropout,
             )
 
@@ -112,8 +104,6 @@ class MGM2Model(nn.Module):
             outputs['regression_preds'] = self.regression_head(hidden_states)
         if self.enable_qwen3_alignment:
             outputs['qwen3_proj'] = self.qwen3_alignment_head(cls_hidden)
-        if self.classification_num_classes is not None:
-            outputs['classification_logits'] = self.classification_head(cls_hidden)
 
         if any([bin_labels is not None, regression_targets is not None]):
             loss_dict = self.compute_losses(
@@ -166,3 +156,120 @@ class MGM2Model(nn.Module):
         if self.enable_qwen3_alignment:
             weights['qwen3_alignment_loss'] = config.get('lambda_qwen3_alignment', 0.1)
         return weights
+
+
+class MGM2CommunityClassificationModel(nn.Module):
+    """Downstream community classification model built on the MGM2 backbone."""
+
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        num_classes: int,
+        mlp_dropout: float = 0.1,
+        pooling_mode: str = 'mean_pool',
+    ):
+        super().__init__()
+        if num_classes <= 0:
+            raise ValueError('num_classes must be positive')
+        if pooling_mode not in {'mean_pool', 'cls'}:
+            raise ValueError("pooling_mode must be one of: 'mean_pool', 'cls'")
+
+        self.hidden_size = config.get('hidden_size', 512)
+        self.vocab_size = config.get('vocab_size', 10000)
+        self.embedding_dim = config.get('embedding_dim', 1536)
+        self.num_hidden_layers = config.get('num_hidden_layers', 12)
+        self.num_attention_heads = config.get('num_attention_heads', 8)
+        self.intermediate_size = config.get('intermediate_size', 2048)
+        self.max_position_embeddings = config.get('max_position_embeddings', 2048)
+        self.hidden_dropout_prob = config.get('hidden_dropout_prob', 0.1)
+        self.attention_probs_dropout_prob = config.get('attention_probs_dropout_prob', 0.1)
+        self.num_classes = num_classes
+        self.pooling_mode = pooling_mode
+
+        self.backbone = BaseModel(
+            vocab_size=self.vocab_size,
+            embedding_dim=self.embedding_dim,
+            hidden_size=self.hidden_size,
+            num_hidden_layers=self.num_hidden_layers,
+            num_attention_heads=self.num_attention_heads,
+            intermediate_size=self.intermediate_size,
+            hidden_dropout_prob=self.hidden_dropout_prob,
+            attention_probs_dropout_prob=self.attention_probs_dropout_prob,
+            max_position_embeddings=self.max_position_embeddings,
+            pad_token_id=config.get('pad_token_id', -1),
+            cls_token_id=config.get('cls_token_id', -1),
+        )
+        self.classification_head = ClassificationHead(
+            hidden_size=self.hidden_size,
+            num_classes=num_classes,
+            dropout=mlp_dropout,
+        )
+
+    def _pool_hidden_states(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if self.pooling_mode == 'cls':
+            return hidden_states[:, 0, :]
+
+        if attention_mask is None:
+            return hidden_states.mean(dim=1)
+
+        valid_mask = attention_mask.to(device=hidden_states.device, dtype=hidden_states.dtype).unsqueeze(-1)
+        pooled_sum = (hidden_states * valid_mask).sum(dim=1)
+        valid_count = valid_mask.sum(dim=1).clamp_min(1.0)
+        return pooled_sum / valid_count
+
+    def load_pretrained_backbone(self, pretrained_model, strict: bool = True):
+        """Load only the MGM2 backbone from a pretrained model or state dict."""
+        if isinstance(pretrained_model, MGM2Model):
+            state_dict = pretrained_model.backbone.state_dict()
+        elif isinstance(pretrained_model, dict):
+            if any(key.startswith('model.backbone.') for key in pretrained_model):
+                state_dict = {
+                    key[len('model.backbone.'):]: value
+                    for key, value in pretrained_model.items()
+                    if key.startswith('model.backbone.')
+                }
+            elif any(key.startswith('backbone.') for key in pretrained_model):
+                state_dict = {
+                    key[len('backbone.'):]: value
+                    for key, value in pretrained_model.items()
+                    if key.startswith('backbone.')
+                }
+            else:
+                state_dict = pretrained_model
+        else:
+            raise TypeError('pretrained_model must be an MGM2Model or a state dict')
+
+        return self.backbone.load_state_dict(state_dict, strict=strict)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        embeddings: torch.Tensor,
+        abundance_values: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
+        backbone_outputs = self.backbone(
+            input_ids=input_ids,
+            embeddings=embeddings,
+            abundance_values=abundance_values,
+            attention_mask=attention_mask,
+        )
+
+        hidden_states = backbone_outputs['last_hidden_state']
+        cls_hidden = hidden_states[:, 0, :]
+        pooled_hidden = self._pool_hidden_states(hidden_states, attention_mask)
+        logits = self.classification_head(pooled_hidden)
+        outputs = {
+            'hidden_states': hidden_states,
+            'cls_hidden': cls_hidden,
+            'pooled_hidden': pooled_hidden,
+            'classification_logits': logits,
+        }
+        if labels is not None:
+            outputs['loss'] = torch.nn.functional.cross_entropy(logits, labels)
+        return outputs
