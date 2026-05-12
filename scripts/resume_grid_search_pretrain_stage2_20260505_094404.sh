@@ -19,13 +19,13 @@ MAX_EPOCHS=50
 NUM_WORKERS=4
 DEVICES=(1 2 3 4)
 EXPERIMENT_PREFIX="stage2_scale"
-RESUME_FROM_PRESET="scale_large"
+RESUME_FROM_PRESET="scale_xlarge"
 
 PRESETS=(
   "scale_small|224|6|4|896|1024"
   "scale_medium|320|6|5|1280|512"
   "scale_large|384|8|6|1536|512"
-  "scale_xlarge|512|10|8|2048|512"
+  "scale_xlarge|512|10|8|2048|256"
 )
 
 for required in "${BASE_CONFIG}" "${DATA_FILE}" "${NTV3_EMBEDDING_PATH}"; do

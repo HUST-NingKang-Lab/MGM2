@@ -24,7 +24,7 @@ PRESETS=(
   "scale_small|224|6|4|896|1024"
   "scale_medium|320|6|5|1280|512"
   "scale_large|384|8|6|1536|512"
-  "scale_xlarge|512|10|8|2048|512"
+  "scale_xlarge|512|10|8|2048|256"
 )
 
 for required in "$BASE_CONFIG" "$DATA_FILE" "$NTV3_EMBEDDING_PATH"; do
