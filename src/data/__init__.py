@@ -13,6 +13,7 @@ from .CommunityClassificationDataset import (
     create_community_classification_test_loader,
     stratified_split_sample_ids,
 )
+from .DrugPerturbationDataset import DrugPerturbationCollator, DrugPerturbationDataset
 from .utils import load_ntv3_embeddings, load_preprocessed_data
 from .build_dataset import MGM2DatasetBuilder
 
@@ -21,6 +22,8 @@ __all__ = [
     'BinManager',
     'MicrobiomeDatasetMGM2',
     'CommunityClassificationDataset',
+    'DrugPerturbationDataset',
+    'DrugPerturbationCollator',
     'create_dataloaders_mgm2',
     'create_community_classification_dataloaders',
     'create_community_classification_test_loader',
