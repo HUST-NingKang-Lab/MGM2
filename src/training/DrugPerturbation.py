@@ -39,6 +39,9 @@ def parse_args():
     parser.add_argument("--max_otus", type=int, default=768)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--prefetch_factor", type=int, default=4)
+    parser.add_argument("--pin_memory", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--cache_aligned_examples", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max_epochs", type=int, default=50)
     parser.add_argument("--learning_rate", type=float, default=1e-3)
     parser.add_argument("--backbone_learning_rate", type=float, default=None)
@@ -129,25 +132,30 @@ def main():
         output_min=config.abundance.output_min,
         output_max=config.abundance.output_max,
         normalize=config.abundance.normalize,
+        cache_aligned_examples=args.cache_aligned_examples,
     )
     labels = group_labels(dataset, args.split_mode)
     train_idx, val_idx = train_val_indices(labels, args.val_fraction, args.seed)
     collator = DrugPerturbationCollator()
+    loader_kwargs = {
+        "num_workers": args.num_workers,
+        "collate_fn": collator,
+        "pin_memory": args.pin_memory and torch.cuda.is_available(),
+        "persistent_workers": args.num_workers > 0,
+    }
+    if args.num_workers > 0:
+        loader_kwargs["prefetch_factor"] = args.prefetch_factor
     train_loader = DataLoader(
         Subset(dataset, train_idx.tolist()),
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=args.num_workers,
-        collate_fn=collator,
-        persistent_workers=args.num_workers > 0,
+        **loader_kwargs,
     )
     val_loader = DataLoader(
         Subset(dataset, val_idx.tolist()),
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=args.num_workers,
-        collate_fn=collator,
-        persistent_workers=args.num_workers > 0,
+        **loader_kwargs,
     )
     print(f"Examples: {len(dataset)} | train: {len(train_idx)} | val: {len(val_idx)}")
 

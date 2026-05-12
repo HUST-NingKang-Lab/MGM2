@@ -60,6 +60,7 @@ class DrugPerturbationDataset(Dataset):
         normalize: bool = False,
         min_read_sum: int = 100,
         donor_to_id: Optional[Dict[str, int]] = None,
+        cache_aligned_examples: bool = True,
     ):
         self.data_dir = Path(data_dir)
         self.otu_counts_path = self.data_dir / "otu_counts.h5"
@@ -67,6 +68,7 @@ class DrugPerturbationDataset(Dataset):
         self.max_otus = int(max_otus)
         self.min_abundance = float(min_abundance)
         self.min_read_sum = int(min_read_sum)
+        self.cache_aligned_examples = bool(cache_aligned_examples)
         self.preprocessor = AbundancePreprocessor(
             min_abundance=min_abundance,
             output_min=output_min,
@@ -86,6 +88,7 @@ class DrugPerturbationDataset(Dataset):
         self.examples = self._build_examples()
         if not self.examples:
             raise ValueError("No usable drug perturbation examples were found")
+        self.cached_items = [self._build_item_arrays(example) for example in self.examples] if self.cache_aligned_examples else None
 
     def _load_drug_embeddings(self):
         with h5py.File(self.data_dir / "drug_embeddings.h5", "r") as handle:
@@ -146,8 +149,7 @@ class DrugPerturbationDataset(Dataset):
             before = rel[:, sorted(control_indices)].mean(axis=1).astype(np.float32)
         return before, after
 
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
-        example = self.examples[idx]
+    def _build_item_arrays(self, example: Dict[str, Any]) -> Dict[str, Any]:
         before, after = self._load_profiles(example["sample_idx"], example["control_indices"])
         before_present = before > 0
         after_present = after > 0
@@ -175,10 +177,8 @@ class DrugPerturbationDataset(Dataset):
 
         before_values = self.preprocessor.transform(before_raw)
         after_values = self.preprocessor.transform(after_raw)
-        embeddings = self.ntv3_embeddings[np.asarray(ntv3_indices, dtype=int)] if ntv3_indices else np.zeros((0, self.ntv3_embeddings.shape[1]), dtype=np.float32)
 
         input_ids = np.concatenate([np.array([-1], dtype=np.int64), union_idx.astype(np.int64)])
-        embeddings = np.vstack([self.cls_embedding[None, :], embeddings]).astype(np.float32)
         before_values = np.concatenate([np.array([0.0], dtype=np.float32), before_values.astype(np.float32)])
         after_values = np.concatenate([np.array([0.0], dtype=np.float32), after_values.astype(np.float32)])
         before_raw = np.concatenate([np.array([0.0], dtype=np.float32), before_raw])
@@ -193,8 +193,8 @@ class DrugPerturbationDataset(Dataset):
             "donor": example["donor"],
             "drug_key": example["drug_key"],
             "otu_ids": otu_ids,
+            "ntv3_indices": np.asarray(ntv3_indices, dtype=np.int64),
             "input_ids": torch.from_numpy(input_ids).long(),
-            "embeddings": torch.from_numpy(embeddings).float(),
             "attention_mask": torch.ones(len(input_ids), dtype=torch.long),
             "before_abundance_values": torch.from_numpy(before_values).float(),
             "after_abundance_values": torch.from_numpy(after_values).float(),
@@ -206,6 +206,20 @@ class DrugPerturbationDataset(Dataset):
             "drug_embedding": torch.from_numpy(self.drug_embeddings[example["drug_idx"]]).float(),
             "donor_id": torch.tensor(example["donor_id"], dtype=torch.long),
         }
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        item = self.cached_items[idx] if self.cached_items is not None else self._build_item_arrays(self.examples[idx])
+        ntv3_indices = item["ntv3_indices"]
+        otu_embeddings = (
+            self.ntv3_embeddings[ntv3_indices]
+            if ntv3_indices.size
+            else np.zeros((0, self.ntv3_embeddings.shape[1]), dtype=np.float32)
+        )
+        embeddings = np.vstack([self.cls_embedding[None, :], otu_embeddings]).astype(np.float32)
+        result = dict(item)
+        result.pop("ntv3_indices")
+        result["embeddings"] = torch.from_numpy(embeddings).float()
+        return result
 
 
 class DrugPerturbationCollator:

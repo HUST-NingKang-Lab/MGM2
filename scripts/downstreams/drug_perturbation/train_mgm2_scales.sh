@@ -23,11 +23,12 @@ SPLIT_MODES=(pair)
 SEEDS=(42)
 
 MAX_EPOCHS=50
-BATCH_SIZE=16
+BATCH_SIZE=64
 LEARNING_RATE=1e-3
 VAL_FRACTION=0.15
 MAX_OTUS=768
-NUM_WORKERS=4
+NUM_WORKERS=8
+PREFETCH_FACTOR=4
 NUM_DRUG_TOKENS=4
 ACCELERATOR="auto"
 PRECISION="bf16"
@@ -68,6 +69,9 @@ for model_scale in "${STAGE2_SCALES[@]}"; do
                 --max_otus "${MAX_OTUS}" \
                 --batch_size "${BATCH_SIZE}" \
                 --num_workers "${NUM_WORKERS}" \
+                --prefetch_factor "${PREFETCH_FACTOR}" \
+                --pin_memory \
+                --cache_aligned_examples \
                 --max_epochs "${MAX_EPOCHS}" \
                 --learning_rate "${LEARNING_RATE}" \
                 --num_drug_tokens "${NUM_DRUG_TOKENS}" \
