@@ -304,9 +304,26 @@ def main():
 
     trainer.fit(module, train_loader, val_loader, ckpt_path=str(args.resume) if args.resume else None)
     if test_loader is not None:
-        trainer.test(module, test_loader, ckpt_path='best')
+        # Resolve best checkpoint path explicitly — ckpt_path='best' can fail under
+        # DDP when floating-point metrics embedded in the filename differ across ranks.
+        best_ckpt = getattr(trainer.checkpoint_callback, 'best_model_path', '')
+        if not best_ckpt or not Path(best_ckpt).is_file():
+            ckpt_dir = Path(config.output_dir) / 'checkpoints'
+            candidates = sorted(ckpt_dir.glob('community-*.ckpt'))
+            candidates = [p for p in candidates if 'last' not in str(p) and 'epoch' in str(p)]
+            if candidates:
+                # Parse val/loss from filename, pick lowest (monitored metric, mode='min')
+                import re
+                def _parse_loss(p):
+                    m = re.search(r'val/loss=([\d.]+)', str(p))
+                    return float(m.group(1)) if m else float('inf')
+                best_ckpt = str(min(candidates, key=_parse_loss))
+        if best_ckpt and Path(best_ckpt).is_file():
+            trainer.test(module, test_loader, ckpt_path=best_ckpt)
+        else:
+            trainer.test(module, test_loader)
         prediction_file = args.prediction_file or (Path(config.output_dir) / 'test_predictions.csv')
-        prediction_batches = trainer.predict(module, test_loader, ckpt_path='best')
+        prediction_batches = trainer.predict(module, test_loader, ckpt_path=best_ckpt if (best_ckpt and Path(best_ckpt).is_file()) else None)
         save_prediction_table(prediction_batches, class_names, prediction_file)
     print(f'\nCommunity classification training complete. Results saved to {config.output_dir}')
 
