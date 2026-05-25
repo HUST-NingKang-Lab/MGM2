@@ -22,7 +22,7 @@ import pandas as pd
 from tqdm import tqdm
 
 
-DEFAULT_DATA_DIR = Path("/data9/zhanghaohong/databases/MicrobeDrugPerturbation/data")
+DEFAULT_DATA_DIR = Path("/home/zhanghaohong/data6/databases/MicrobeDrugPerturbation/data")
 
 
 @dataclass

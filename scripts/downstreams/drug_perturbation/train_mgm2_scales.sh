@@ -12,7 +12,7 @@ cd "${REPO_ROOT}"
 
 PYTHON_BIN="/home/zhanghaohong/anaconda3/envs/mwm/bin/python"
 
-DATA_DIR="/data9/zhanghaohong/databases/MicrobeDrugPerturbation/data"
+PREPROCESSED_DATA="data/downstreams/drug_perturbation/drug_perturbation_top1024.pkl"
 OUTPUT_ROOT="outputs_downstreams/drug_perturbation/mgm2_scales"
 STAGE2_ROOT="outputs_grid/stage2/20260505_094404"
 NTV3_EMBEDDING_PATH="ntv3_embeddings/otus_99_embeddings.h5"
@@ -23,18 +23,25 @@ SPLIT_MODES=(pair)
 SEEDS=(42)
 
 MAX_EPOCHS=50
-BATCH_SIZE=64
+BATCH_SIZE=512
 LEARNING_RATE=1e-3
 VAL_FRACTION=0.15
-MAX_OTUS=768
+MAX_OTUS=1024
+MAX_FOLDS=0
 NUM_WORKERS=8
 PREFETCH_FACTOR=4
 NUM_DRUG_TOKENS=4
 ACCELERATOR="auto"
 PRECISION="bf16"
-DEVICES=(0)
+DEVICES=(1)
 
 mkdir -p "${OUTPUT_ROOT}"
+
+if [[ ! -f "${PREPROCESSED_DATA}" ]]; then
+    echo "Preprocessed data not found: ${PREPROCESSED_DATA}" >&2
+    echo "Run: bash scripts/downstreams/drug_perturbation/build_mgm2_dataset.sh" >&2
+    exit 1
+fi
 
 for model_scale in "${STAGE2_SCALES[@]}"; do
     config_path="${STAGE2_ROOT}/${model_scale}/config.json"
@@ -58,7 +65,7 @@ for model_scale in "${STAGE2_SCALES[@]}"; do
 
             echo "[$(date '+%F %T')] Running ${run_name} with ${checkpoint_path}"
             "${PYTHON_BIN}" -u src/training/DrugPerturbation.py \
-                --data_dir "${DATA_DIR}" \
+                --preprocessed_data "${PREPROCESSED_DATA}" \
                 --ntv3_embedding_path "${NTV3_EMBEDDING_PATH}" \
                 --config "${config_path}" \
                 --pretrained_checkpoint "${checkpoint_path}" \
@@ -67,11 +74,12 @@ for model_scale in "${STAGE2_SCALES[@]}"; do
                 --split_mode "${split_mode}" \
                 --val_fraction "${VAL_FRACTION}" \
                 --max_otus "${MAX_OTUS}" \
+                --loo_eval \
+                --max_folds "${MAX_FOLDS}" \
                 --batch_size "${BATCH_SIZE}" \
                 --num_workers "${NUM_WORKERS}" \
                 --prefetch_factor "${PREFETCH_FACTOR}" \
                 --pin_memory \
-                --cache_aligned_examples \
                 --max_epochs "${MAX_EPOCHS}" \
                 --learning_rate "${LEARNING_RATE}" \
                 --num_drug_tokens "${NUM_DRUG_TOKENS}" \
@@ -81,17 +89,9 @@ for model_scale in "${STAGE2_SCALES[@]}"; do
                 --seed "${seed}" \
                 --freeze_backbone \
                 2>&1 | tee "${log_file}"
-
-            "${PYTHON_BIN}" scripts/downstreams/drug_perturbation/summarize_mgm2_scale_results.py \
-                --run_dir "${run_dir}" \
-                --summary_csv "${SUMMARY_CSV}" \
-                --model_scale "${model_scale}" \
-                --split_mode "${split_mode}" \
-                --seed "${seed}" \
-                --run_name "${run_name}"
         done
     done
 done
 
 echo "[$(date '+%F %T')] Finished MGM2 drug perturbation scale runs for available stage-2 scales"
-echo "[$(date '+%F %T')] Summary written to ${SUMMARY_CSV}"
+echo "[$(date '+%F %T')] Per-run summaries are written under ${OUTPUT_ROOT}/<scale>/<split>/seed_<seed>/summary.csv"
