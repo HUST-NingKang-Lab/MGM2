@@ -1110,6 +1110,39 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertAlmostEqual(2.0, prediction_table.loc[0, "logit_0_soil"])
         self.assertAlmostEqual(0.3, prediction_table.loc[0, "prob_1_unknown"])
 
+    def test_community_classification_prediction_table_flattens_gathered_rank_batches(self):
+        module_path = Path(__file__).resolve().parents[1] / "src" / "training" / "CommunityClassification.py"
+        spec = importlib.util.spec_from_file_location("community_classification", module_path)
+        community_classification = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(community_classification)
+
+        rank0_batch = {
+            "sample_id": ["s1"],
+            "label_id": torch.tensor([0]),
+            "pred_id": torch.tensor([0]),
+            "probability": torch.tensor([0.8]),
+            "probabilities": torch.tensor([[0.8, 0.2]]),
+        }
+        rank1_batch = {
+            "sample_id": ["s2"],
+            "label_id": torch.tensor([1]),
+            "pred_id": torch.tensor([1]),
+            "probability": torch.tensor([0.9]),
+            "probabilities": torch.tensor([[0.1, 0.9]]),
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "predictions.csv"
+            community_classification.save_prediction_table(
+                [[rank0_batch], [rank1_batch]],
+                ["soil", "human"],
+                output_path,
+            )
+            prediction_table = pd.read_csv(output_path)
+
+        self.assertEqual(["s1", "s2"], prediction_table["SampleID"].tolist())
+        self.assertEqual(["soil", "human"], prediction_table["prediction"].tolist())
+
     def test_community_classification_module_logs_loss_and_accuracy(self):
         config = MGM2Config()
         config.model.embedding_dim = 4
