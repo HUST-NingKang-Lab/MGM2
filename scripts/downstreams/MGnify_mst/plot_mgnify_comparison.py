@@ -40,7 +40,7 @@ LEVEL_LABELS = ["L1", "L2", "L3", "L4", "L5"]
 
 LOCAL_TRAIN_META = Path("data/downstreams/MGnify_mst/train_meta_split.csv")
 LOCAL_TEST_META = Path("data/downstreams/MGnify_mst/test_meta_split.csv")
-MGM1_DIR = Path("/home/zhanghaohong/data6/projects/MGM2Benchmarks/MGnify_mst/MGM/predictions_legacy")
+MGM1_DIR = Path("/home/zhanghaohong/data6/projects/MGM2Benchmarks/MGnify_mst/MGM/finetune_outputs")
 DP_DIR = Path("/home/zhanghaohong/data6/projects/MGM2Benchmarks/MGnify_mst/deepphylo/results/benchmark_raw")
 EXPERT_DIR = Path("/home/zhanghaohong/data6/projects/MGM2Benchmarks/MGnify_mst/expert/outputs")
 EXPERT_TRAIN_META = Path("/home/zhanghaohong/data6/projects/MGM2Benchmarks/MGnify_mst/expert/train_meta.csv")
@@ -290,7 +290,7 @@ def eval_mgm1():
         mgm1_level = f"layer{li + 1}"
         scores = []
         for seed in SEEDS:
-            pred_path = MGM1_DIR / f"embed_{mgm1_level}_seed{seed}" / "y_score.csv"
+            pred_path = MGM1_DIR / f"predictions_{mgm1_level}_seed{seed}" / "y_score.csv"
             if not pred_path.exists():
                 continue
             df = pd.read_csv(pred_path)
@@ -529,7 +529,7 @@ plot_colors = {
     "MGM2-large": "#00897B",
     "MGM2-xlarge": "#6A1B9A",
 }
-plot_order = ["RF", "Expert", "DeepPhylo", "MGM1", "MGM2-small", "MGM2-medium"]
+plot_order = ["RF", "Expert", "DeepPhylo", "MGM1", "MGM2-small", "MGM2-medium", "MGM2-large"]
 
 x = np.arange(len(LEVELS))
 n_models = max(len(plot_order), 1)
