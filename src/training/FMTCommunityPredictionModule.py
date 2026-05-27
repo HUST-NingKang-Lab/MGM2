@@ -119,11 +119,11 @@ class FMTCommunityPredictionLightningModule(pl.LightningModule):
             "donor_sample_id": batch["donor_sample_id"],
             "recipient_sample_id": batch["recipient_sample_id"],
             "post_sample_id": batch["post_sample_id"],
-            "timepoint_fmt": batch["timepoint_fmt"].detach().cpu(),
-            "pred_post_raw": pred_raw.detach().cpu(),
-            "true_post_raw": batch["post_abundance_raw"][:, 1:].detach().cpu(),
-            "recipient_raw": batch["recipient_abundance_raw"][:, 1:].detach().cpu(),
-            "donor_raw": batch["donor_abundance_raw"][:, 1:].detach().cpu(),
+            "timepoint_fmt": batch["timepoint_fmt"].detach().float().cpu(),
+            "pred_post_raw": pred_raw.detach().float().cpu(),
+            "true_post_raw": batch["post_abundance_raw"][:, 1:].detach().float().cpu(),
+            "recipient_raw": batch["recipient_abundance_raw"][:, 1:].detach().float().cpu(),
+            "donor_raw": batch["donor_abundance_raw"][:, 1:].detach().float().cpu(),
         }
 
     def configure_optimizers(self):

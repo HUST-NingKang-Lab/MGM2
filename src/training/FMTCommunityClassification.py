@@ -16,12 +16,16 @@ import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint, RichProgressBar
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
+from torch.utils.data import DataLoader, Subset
 
 from src.configs.Config import MGM2Config
 from src.data.FMTDataset import (
+    FMTCommunityClassificationCollator,
     FMTCommunityClassificationDataset,
     create_fmt_community_classification_dataloaders,
     create_fmt_community_classification_test_loader,
+    grouped_kfold_indices,
+    grouped_train_val_indices,
 )
 from src.training.FMTCommunityClassificationModule import FMTCommunityClassificationLightningModule
 
@@ -46,6 +50,9 @@ def parse_args():
     parser.add_argument("--fold_index", type=int, default=0)
     parser.add_argument("--num_folds", type=int, default=5)
     parser.add_argument("--val_group_column", type=str, default="fmt_id")
+    parser.add_argument("--fold_label_column", type=str, default="response_label")
+    parser.add_argument("--val_ratio", type=float, default=0.1)
+    parser.add_argument("--outer_cv", action="store_true")
     parser.add_argument("--max_epochs", type=int, default=80)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--learning_rate", type=float, default=1e-4)
@@ -139,6 +146,19 @@ def resolve_eval_ckpt(trainer: pl.Trainer, mode: str):
     if mode == "last" and checkpoint.last_model_path:
         return checkpoint.last_model_path
     return None
+
+
+def create_subset_loader(dataset, indices: np.ndarray, args, shuffle: bool) -> DataLoader:
+    loader_kwargs = {
+        "num_workers": args.num_workers,
+        "collate_fn": FMTCommunityClassificationCollator(),
+        "pin_memory": args.pin_memory and torch.cuda.is_available(),
+        "persistent_workers": args.num_workers > 0,
+        "shuffle": shuffle,
+    }
+    if args.num_workers > 0:
+        loader_kwargs["prefetch_factor"] = args.prefetch_factor
+    return DataLoader(Subset(dataset, indices.tolist()), batch_size=args.batch_size, **loader_kwargs)
 
 
 def _flatten_predictions(predictions: Iterable[Any]) -> List[Dict[str, Any]]:
@@ -291,47 +311,79 @@ def main():
         normalize=config.abundance.normalize,
     )
     class_names = train_dataset.class_names
-    train_loader, val_loader, train_idx, val_idx = create_fmt_community_classification_dataloaders(
-        train_dataset=train_dataset,
-        fold_index=args.fold_index,
-        n_splits=args.num_folds,
-        seed=args.seed,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-        prefetch_factor=args.prefetch_factor,
-        group_column=args.val_group_column,
-    )
-    print(
-        f"FMT response events: {len(train_dataset)} | fold {args.fold_index + 1}/{args.num_folds} "
-        f"train={len(train_idx)} val={len(val_idx)}"
-    )
+    if args.outer_cv:
+        outer_folds = grouped_kfold_indices(
+            train_dataset.metadata,
+            n_splits=args.num_folds,
+            seed=args.seed,
+            group_column=args.val_group_column,
+            label_column=args.fold_label_column,
+        )
+        outer_train_idx, test_idx = outer_folds[args.fold_index]
+        inner_metadata = train_dataset.metadata.iloc[outer_train_idx]
+        inner_train_rel, inner_val_rel = grouped_train_val_indices(
+            inner_metadata,
+            args.val_ratio,
+            args.seed + args.fold_index + 1000,
+            group_column=args.val_group_column,
+        )
+        train_idx = outer_train_idx[inner_train_rel]
+        val_idx = outer_train_idx[inner_val_rel]
+        train_loader = create_subset_loader(train_dataset, train_idx, args, shuffle=True)
+        val_loader = create_subset_loader(train_dataset, val_idx, args, shuffle=False)
+        print(
+            f"FMT response events: {len(train_dataset)} | outer fold {args.fold_index + 1}/{args.num_folds} "
+            f"train={len(train_idx)} val={len(val_idx)} test={len(test_idx)}"
+        )
+    else:
+        train_loader, val_loader, train_idx, val_idx = create_fmt_community_classification_dataloaders(
+            train_dataset=train_dataset,
+            fold_index=args.fold_index,
+            n_splits=args.num_folds,
+            seed=args.seed,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+            prefetch_factor=args.prefetch_factor,
+            group_column=args.val_group_column,
+        )
+        test_idx = None
+        print(
+            f"FMT response events: {len(train_dataset)} | fold {args.fold_index + 1}/{args.num_folds} "
+            f"train={len(train_idx)} val={len(val_idx)}"
+        )
     print(f"Classes: {class_names} | Features: {train_dataset.num_features}")
 
     module = make_module(config, args, class_names)
     trainer = make_trainer(config, args)
     trainer.fit(module, train_loader, val_loader)
 
-    if args.test_data_file is None or args.test_metadata_file is None:
+    if args.outer_cv:
+        test_dataset = train_dataset
+        test_loader = create_subset_loader(train_dataset, test_idx, args, shuffle=False)
+        test_event_count = int(len(test_idx))
+    elif args.test_data_file is None or args.test_metadata_file is None:
         return
-    test_embedding = args.test_ntv3_embedding_path or args.ntv3_embedding_path
-    test_dataset = FMTCommunityClassificationDataset(
-        community_data_file=args.test_data_file,
-        metadata_file=args.test_metadata_file,
-        ntv3_embedding_path=test_embedding,
-        min_abundance=config.abundance.min_abundance,
-        output_min=config.abundance.output_min,
-        output_max=config.abundance.output_max,
-        normalize=config.abundance.normalize,
-        class_names=class_names,
-    )
-    test_loader = create_fmt_community_classification_test_loader(
-        test_dataset=test_dataset,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_memory,
-        prefetch_factor=args.prefetch_factor,
-    )
+    else:
+        test_embedding = args.test_ntv3_embedding_path or args.ntv3_embedding_path
+        test_dataset = FMTCommunityClassificationDataset(
+            community_data_file=args.test_data_file,
+            metadata_file=args.test_metadata_file,
+            ntv3_embedding_path=test_embedding,
+            min_abundance=config.abundance.min_abundance,
+            output_min=config.abundance.output_min,
+            output_max=config.abundance.output_max,
+            normalize=config.abundance.normalize,
+            class_names=class_names,
+        )
+        test_loader = create_fmt_community_classification_test_loader(
+            test_dataset=test_dataset,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+            prefetch_factor=args.prefetch_factor,
+        )
+        test_event_count = int(len(test_dataset))
     ckpt_path = resolve_eval_ckpt(trainer, args.eval_checkpoint)
     eval_devices = [args.devices[0]] if isinstance(args.devices, list) and args.devices else None
     eval_trainer = make_trainer(config, args, devices=eval_devices, callbacks=False)
@@ -347,7 +399,8 @@ def main():
             "num_folds": args.num_folds,
             "train_events": int(len(train_idx)),
             "val_events": int(len(val_idx)),
-            "test_events": int(len(test_dataset)),
+            "test_events": test_event_count,
+            "outer_cv": bool(args.outer_cv),
             "eval_checkpoint": str(ckpt_path) if ckpt_path else "current",
         },
     )
