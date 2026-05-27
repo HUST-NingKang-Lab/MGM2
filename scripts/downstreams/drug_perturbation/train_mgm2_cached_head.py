@@ -108,10 +108,12 @@ class CachedDrugPerturbationHead(nn.Module):
         num_attention_heads: int,
         cross_attention_heads: int | None = None,
         dropout: float = 0.1,
+        use_abundance_feature: bool = False,
     ):
         super().__init__()
         self.hidden_size = int(hidden_size)
         self.num_drug_tokens = int(num_drug_tokens)
+        self.use_abundance_feature = bool(use_abundance_feature)
         heads = int(cross_attention_heads or num_attention_heads)
         self.drug_projector = nn.Sequential(
             nn.Linear(drug_embedding_dim, self.hidden_size * self.num_drug_tokens),
@@ -128,14 +130,22 @@ class CachedDrugPerturbationHead(nn.Module):
         self.condition_layer_norm = nn.LayerNorm(self.hidden_size)
         self.output_layer_norm = nn.LayerNorm(self.hidden_size)
         self.dropout = nn.Dropout(dropout)
+        delta_input_size = self.hidden_size + (1 if self.use_abundance_feature else 0)
         self.delta_head = nn.Sequential(
-            nn.Linear(self.hidden_size, self.hidden_size),
+            nn.Linear(delta_input_size, self.hidden_size),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(self.hidden_size, 1),
         )
 
-    def forward(self, hidden_states: torch.Tensor, before_abundance_values: torch.Tensor, drug_embedding: torch.Tensor, donor_id: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        before_abundance_values: torch.Tensor,
+        drug_embedding: torch.Tensor,
+        donor_id: torch.Tensor,
+        head_abundance_values: torch.Tensor | None = None,
+    ) -> Dict[str, torch.Tensor]:
         batch_size = hidden_states.shape[0]
         drug_tokens = self.drug_projector(drug_embedding).view(batch_size, self.num_drug_tokens, self.hidden_size)
         donor_token = self.donor_embedding(donor_id).unsqueeze(1)
@@ -147,7 +157,12 @@ class CachedDrugPerturbationHead(nn.Module):
             need_weights=False,
         )
         conditioned_hidden = self.output_layer_norm(hidden_states + self.dropout(conditioned))
-        pred_delta = self.delta_head(conditioned_hidden).squeeze(-1)
+        delta_input = conditioned_hidden
+        if self.use_abundance_feature:
+            if head_abundance_values is None:
+                head_abundance_values = before_abundance_values
+            delta_input = torch.cat([conditioned_hidden, head_abundance_values.unsqueeze(-1)], dim=-1)
+        pred_delta = self.delta_head(delta_input).squeeze(-1)
         return {"pred_delta": pred_delta, "pred_after_abundance": before_abundance_values + pred_delta}
 
 
@@ -218,6 +233,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output_dir", type=Path, required=True)
     parser.add_argument("--split_mode", choices=["pair", "drug", "donor"], default="pair")
     parser.add_argument("--max_folds", type=int, default=0, help="0 means all folds")
+    parser.add_argument("--fold_selection", choices=["first", "random"], default="first")
+    parser.add_argument("--fold_subset_seed", type=int, default=None)
     parser.add_argument("--val_fraction", type=float, default=0.15)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--num_workers", type=int, default=0, help="Use 0 for cached tensor data to avoid shared-memory file descriptor exhaustion")
@@ -231,6 +248,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pseudocount", type=float, default=1e-6)
     parser.add_argument("--target_space", choices=["mgm2", "log1p_raw", "relative_raw"], default="mgm2")
     parser.add_argument("--standardize_delta", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--head_abundance_feature", action=argparse.BooleanOptionalAction, default=False, help="Concatenate target-space before abundance to each OTU hidden state before the delta head")
     parser.add_argument("--delta_shrinkage", type=float, default=1.0, help="Fixed multiplier applied to transformed-space predicted delta before raw evaluation")
     parser.add_argument("--raw_after_mse_weight", type=float, default=0.0, help="Auxiliary MSE on raw post-perturbation abundance")
     parser.add_argument("--magnitude_weight", type=float, default=0.0, help="Auxiliary raw delta magnitude MAE")
@@ -263,6 +281,18 @@ def examples_frame(examples: List[Dict]) -> pd.DataFrame:
             "drug_key": [example.get("drug_key", "") for example in examples],
         }
     )
+
+
+def selected_leave_one_groups(examples: pd.DataFrame, split_mode: str, args: argparse.Namespace):
+    folds = list(baseline_utils.iter_leave_one_groups(examples, split_mode))
+    if args.max_folds > 0:
+        if args.fold_selection == "random":
+            rng = np.random.default_rng(args.fold_subset_seed if args.fold_subset_seed is not None else args.seed)
+            selected = np.sort(rng.choice(len(folds), size=min(args.max_folds, len(folds)), replace=False))
+            folds = [folds[int(idx)] for idx in selected]
+        else:
+            folds = folds[: args.max_folds]
+    return folds
 
 
 def train_val_indices(labels: List[str], val_fraction: float, seed: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -335,6 +365,7 @@ def make_model(dataset: CachedBackboneDataset, args: argparse.Namespace) -> Cach
         num_attention_heads=int(info["num_attention_heads"]),
         cross_attention_heads=info.get("cross_attention_heads"),
         dropout=float(info.get("mlp_dropout", 0.1)),
+        use_abundance_feature=args.head_abundance_feature,
     )
 
 
@@ -354,6 +385,17 @@ def batch_target_delta(batch: Dict, args: argparse.Namespace) -> torch.Tensor:
         "after_abundance_eval_raw": batch["after_abundance_eval_raw"],
     }
     return target_delta_from_tensors(tensors, args)
+
+
+def batch_target_before(batch: Dict, args: argparse.Namespace) -> torch.Tensor:
+    tensors = {
+        "before_abundance_values": batch["before_abundance_values"],
+        "after_abundance_values": batch["after_abundance_values"],
+        "before_abundance_eval_raw": batch["before_abundance_eval_raw"],
+        "after_abundance_eval_raw": batch["after_abundance_eval_raw"],
+    }
+    before, _ = target_space_before_after(tensors, args)
+    return before
 
 
 def pred_after_to_raw(batch: Dict, pred_delta: torch.Tensor, args: argparse.Namespace) -> torch.Tensor:
@@ -381,6 +423,7 @@ def shared_loss(model: nn.Module, batch: Dict, args: argparse.Namespace, device:
             before_abundance_values=batch["before_abundance_values"],
             drug_embedding=batch["drug_embedding"],
             donor_id=batch["donor_id"],
+            head_abundance_values=batch_target_before(batch, args) if args.head_abundance_feature else None,
         )
         mask = batch["supervision_mask"].bool()
         target_delta = batch_target_delta(batch, args)
@@ -524,6 +567,7 @@ def predict(model: CachedDrugPerturbationHead, dataset: CachedBackboneDataset, t
                     before_abundance_values=batch["before_abundance_values"],
                     drug_embedding=batch["drug_embedding"],
                     donor_id=batch["donor_id"],
+                    head_abundance_values=batch_target_before(batch, args) if args.head_abundance_feature else None,
                 )
                 pred_delta = finalize_pred_delta(outputs["pred_delta"], standardizer, args.delta_shrinkage)
                 pred_raw = pred_after_to_raw(batch, pred_delta, args)
@@ -591,10 +635,8 @@ def main() -> None:
     fold_frames = []
     prediction_metadata: List[pd.DataFrame] = []
     prediction_chunks: Dict[str, List[np.ndarray]] = {"mgm2_cached_head": []}
-    max_folds = None if args.max_folds == 0 else args.max_folds
-    for fold_idx, (train_idx, test_idx, group_label) in enumerate(baseline_utils.iter_leave_one_groups(examples, args.split_mode)):
-        if max_folds is not None and fold_idx >= max_folds:
-            break
+    folds = selected_leave_one_groups(examples, args.split_mode, args)
+    for fold_idx, (train_idx, test_idx, group_label) in enumerate(folds):
         fold_train_idx, fold_val_idx = inner_train_val_indices(labels, train_idx, args.val_fraction, args.seed + fold_idx)
         if _is_rank_zero():
             print(f"{args.split_mode} fold {fold_idx + 1}: {group_label} train={len(fold_train_idx)} val={len(fold_val_idx)} test={len(test_idx)}", flush=True)
