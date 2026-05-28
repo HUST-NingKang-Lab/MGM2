@@ -31,14 +31,19 @@ BATCH_SIZE=2048
 LEARNING_RATE=1e-4
 WEIGHT_DECAY=0.01
 VAL_RATIO=0.1
-NUM_WORKERS=8
+NUM_WORKERS=1
 POOLING_MODE="cls"
 DEVICES=(1 2 3 4)
 
 mkdir -p "${OUTPUT_ROOT}"
 
 for model_scale in "${STAGE2_SCALES[@]}"; do
+    config_path="${STAGE2_ROOT}/${model_scale}/config.json"
     checkpoint_path="${STAGE2_ROOT}/${model_scale}/checkpoints/last.ckpt"
+    if [[ ! -f "${config_path}" ]]; then
+        echo "[$(date '+%F %T')] Skipping ${model_scale}: config not found at ${config_path}"
+        continue
+    fi
     if [[ ! -f "${checkpoint_path}" ]]; then
         echo "[$(date '+%F %T')] Skipping ${model_scale}: checkpoint not found at ${checkpoint_path}"
         continue
@@ -60,6 +65,7 @@ for model_scale in "${STAGE2_SCALES[@]}"; do
                 --test_metadata_file "${TEST_METADATA_FILE}" \
                 --ntv3_embedding_path "${TRAIN_NTV3_EMBEDDING}" \
                 --test_ntv3_embedding_path "${TEST_NTV3_EMBEDDING}" \
+                --config "${config_path}" \
                 --sample_id_column "${SAMPLE_ID_COLUMN}" \
                 --label_column "${label_column}" \
                 --val_ratio "${VAL_RATIO}" \

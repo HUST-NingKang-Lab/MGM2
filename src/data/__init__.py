@@ -13,7 +13,17 @@ from .CommunityClassificationDataset import (
     create_community_classification_test_loader,
     stratified_split_sample_ids,
 )
-from .DrugPerturbationDataset import DrugPerturbationCollator, DrugPerturbationDataset
+from .DrugPerturbationDataset import DrugPerturbationCollator, DrugPerturbationDataset, DrugPerturbationPreprocessedDataset
+from .FMTDataset import (
+    FMTCommunityClassificationCollator,
+    FMTCommunityClassificationDataset,
+    FMTCommunityPredictionCollator,
+    FMTCommunityPredictionDataset,
+    create_fmt_community_classification_dataloaders,
+    create_fmt_community_classification_test_loader,
+    create_fmt_community_prediction_dataloaders,
+    create_fmt_community_prediction_test_loader,
+)
 from .utils import load_ntv3_embeddings, load_preprocessed_data
 from .build_dataset import MGM2DatasetBuilder
 
@@ -23,8 +33,17 @@ __all__ = [
     'MicrobiomeDatasetMGM2',
     'CommunityClassificationDataset',
     'DrugPerturbationDataset',
+    'DrugPerturbationPreprocessedDataset',
     'DrugPerturbationCollator',
+    'FMTCommunityClassificationDataset',
+    'FMTCommunityClassificationCollator',
+    'FMTCommunityPredictionDataset',
+    'FMTCommunityPredictionCollator',
     'create_dataloaders_mgm2',
+    'create_fmt_community_classification_dataloaders',
+    'create_fmt_community_classification_test_loader',
+    'create_fmt_community_prediction_dataloaders',
+    'create_fmt_community_prediction_test_loader',
     'create_community_classification_dataloaders',
     'create_community_classification_test_loader',
     'stratified_split_sample_ids',
