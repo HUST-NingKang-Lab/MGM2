@@ -58,6 +58,10 @@ class MLPConfig:
     normalize_prediction: str
     include_mean_baselines: bool
     device: str
+    fold_selection: str
+    fold_subset_seed: Optional[int]
+    mgm2_cache: Optional[str]
+    mgm2_feature_mode: str
 
 
 @dataclass
@@ -87,6 +91,7 @@ class DrugPerturbationMLP(nn.Module):
         community_dim: int,
         drug_dim: int,
         donor_dim: int,
+        mgm2_dim: int = 0,
         hidden_size: int = 256,
         dropout: float = 0.1,
     ):
@@ -94,6 +99,7 @@ class DrugPerturbationMLP(nn.Module):
         community_hidden = max(hidden_size, 32)
         drug_hidden = max(hidden_size // 2, 32)
         donor_hidden = max(hidden_size // 8, 8)
+        mgm2_hidden = max(hidden_size // 2, 32) if mgm2_dim > 0 else 0
         self.community_encoder = nn.Sequential(
             nn.Linear(community_dim, community_hidden),
             nn.ReLU(),
@@ -108,23 +114,32 @@ class DrugPerturbationMLP(nn.Module):
             nn.Linear(donor_dim, donor_hidden),
             nn.ReLU(),
         )
+        self.mgm2_encoder = (
+            nn.Sequential(
+                nn.Linear(mgm2_dim, mgm2_hidden),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+            )
+            if mgm2_dim > 0
+            else None
+        )
         self.head = nn.Sequential(
-            nn.Linear(community_hidden + drug_hidden + donor_hidden, hidden_size),
+            nn.Linear(community_hidden + drug_hidden + donor_hidden + mgm2_hidden, hidden_size),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_size, community_dim),
         )
 
-    def forward(self, baseline_x: torch.Tensor, drug_x: torch.Tensor, donor_x: torch.Tensor) -> torch.Tensor:
+    def forward(self, baseline_x: torch.Tensor, drug_x: torch.Tensor, donor_x: torch.Tensor, mgm2_x: torch.Tensor) -> torch.Tensor:
+        features = [
+            self.community_encoder(baseline_x),
+            self.drug_encoder(drug_x),
+            self.donor_encoder(donor_x),
+        ]
+        if self.mgm2_encoder is not None:
+            features.append(self.mgm2_encoder(mgm2_x))
         return self.head(
-            torch.cat(
-                [
-                    self.community_encoder(baseline_x),
-                    self.drug_encoder(drug_x),
-                    self.donor_encoder(donor_x),
-                ],
-                dim=-1,
-            )
+            torch.cat(features, dim=-1)
         )
 
 
@@ -246,6 +261,53 @@ def one_hot(values: pd.Series, categories: List[str]) -> np.ndarray:
     return result
 
 
+def load_mgm2_cache_features(
+    cache_path: Optional[Path],
+    examples: pd.DataFrame,
+    feature_mode: str,
+) -> Optional[np.ndarray]:
+    if cache_path is None:
+        return None
+    if feature_mode == "none":
+        return None
+    data = torch.load(cache_path, map_location="cpu", weights_only=False)
+    hidden = data["hidden_states"]
+    if feature_mode == "cls":
+        features = hidden[:, 0, :].float()
+    elif feature_mode == "mean":
+        features = hidden[:, 1:, :].mean(dim=1).float()
+    elif feature_mode == "cls_mean":
+        cls = hidden[:, 0, :].float()
+        mean = hidden[:, 1:, :].mean(dim=1).float()
+        features = torch.cat([cls, mean], dim=1)
+    else:
+        raise ValueError("mgm2_feature_mode must be one of: none, cls, mean, cls_mean")
+
+    cache_examples = pd.DataFrame(
+        {
+            "Run": [item.get("sample_id", "") for item in data["examples"]],
+            "Donor": [item.get("donor", "") for item in data["examples"]],
+            "drug_key": [item.get("drug_key", "") for item in data["examples"]],
+            "row": np.arange(len(data["examples"]), dtype=int),
+        }
+    )
+    key_to_row = {
+        (str(row.Run), str(row.Donor), str(row.drug_key)): int(row.row)
+        for row in cache_examples.itertuples(index=False)
+    }
+    rows = []
+    missing = []
+    for row in examples.itertuples(index=False):
+        key = (str(getattr(row, "Run")), str(getattr(row, "Donor")), str(getattr(row, "drug_key")))
+        if key not in key_to_row:
+            missing.append(key)
+        else:
+            rows.append(key_to_row[key])
+    if missing:
+        raise ValueError(f"MGM2 cache is missing {len(missing)} examples; first missing={missing[0]}")
+    return features[rows].numpy().astype(np.float32)
+
+
 def _h5_string_array(values: List[str]) -> np.ndarray:
     return np.asarray([str(value) for value in values], dtype=object)
 
@@ -309,14 +371,18 @@ def make_loader(
     baseline_x: np.ndarray,
     drug_x: np.ndarray,
     donor_x: np.ndarray,
+    mgm2_x: Optional[np.ndarray],
     target_delta: np.ndarray,
     batch_size: int,
     shuffle: bool,
 ) -> DataLoader:
+    if mgm2_x is None:
+        mgm2_x = np.zeros((baseline_x.shape[0], 0), dtype=np.float32)
     dataset = TensorDataset(
         torch.from_numpy(baseline_x.astype(np.float32)),
         torch.from_numpy(drug_x.astype(np.float32)),
         torch.from_numpy(donor_x.astype(np.float32)),
+        torch.from_numpy(mgm2_x.astype(np.float32)),
         torch.from_numpy(target_delta.astype(np.float32)),
     )
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
@@ -330,6 +396,7 @@ def train_predict_fold(
     post_profiles: np.ndarray,
     drug_embeddings: np.ndarray,
     donor_categories: List[str],
+    mgm2_features: Optional[np.ndarray],
     mode: str,
     config: MLPConfig,
     device: torch.device,
@@ -346,12 +413,14 @@ def train_predict_fold(
     baseline_scaler = Standardizer.fit(baseline_t[inner_train_idx])
     delta_scaler = Standardizer.fit(delta_t[inner_train_idx])
     drug_scaler = Standardizer.fit(drug_embeddings[examples.iloc[inner_train_idx]["embedding_idx"].astype(int)])
+    mgm2_scaler = Standardizer.fit(mgm2_features[inner_train_idx]) if mgm2_features is not None else None
     donor_x = one_hot(examples["Donor"], donor_categories)
 
     train_loader = make_loader(
         baseline_scaler.transform(baseline_t[inner_train_idx]),
         drug_scaler.transform(drug_embeddings[examples.iloc[inner_train_idx]["embedding_idx"].astype(int)]),
         donor_x[inner_train_idx],
+        mgm2_scaler.transform(mgm2_features[inner_train_idx]) if mgm2_scaler is not None and mgm2_features is not None else None,
         delta_scaler.transform(delta_t[inner_train_idx]),
         config.batch_size,
         True,
@@ -360,6 +429,7 @@ def train_predict_fold(
         baseline_scaler.transform(baseline_t[val_idx]),
         drug_scaler.transform(drug_embeddings[examples.iloc[val_idx]["embedding_idx"].astype(int)]),
         donor_x[val_idx],
+        mgm2_scaler.transform(mgm2_features[val_idx]) if mgm2_scaler is not None and mgm2_features is not None else None,
         delta_scaler.transform(delta_t[val_idx]),
         config.batch_size,
         False,
@@ -369,6 +439,7 @@ def train_predict_fold(
         community_dim=baseline_profiles.shape[1],
         drug_dim=drug_embeddings.shape[1],
         donor_dim=len(donor_categories),
+        mgm2_dim=0 if mgm2_features is None else mgm2_features.shape[1],
         hidden_size=config.hidden_size,
         dropout=config.dropout,
     ).to(device)
@@ -382,8 +453,8 @@ def train_predict_fold(
     for epoch in range(config.max_epochs):
         model.train()
         for batch in train_loader:
-            baseline_x, drug_x, donor_batch, target_delta = [item.to(device) for item in batch]
-            pred_delta = model(baseline_x, drug_x, donor_batch)
+            baseline_x, drug_x, donor_batch, mgm2_batch, target_delta = [item.to(device) for item in batch]
+            pred_delta = model(baseline_x, drug_x, donor_batch, mgm2_batch)
             loss = criterion(pred_delta, target_delta)
             if config.delta_l1_weight > 0:
                 loss = loss + config.delta_l1_weight * pred_delta.abs().mean()
@@ -395,8 +466,8 @@ def train_predict_fold(
         val_losses = []
         with torch.no_grad():
             for batch in val_loader:
-                baseline_x, drug_x, donor_batch, target_delta = [item.to(device) for item in batch]
-                val_losses.append(float(criterion(model(baseline_x, drug_x, donor_batch), target_delta).item()))
+                baseline_x, drug_x, donor_batch, mgm2_batch, target_delta = [item.to(device) for item in batch]
+                val_losses.append(float(criterion(model(baseline_x, drug_x, donor_batch, mgm2_batch), target_delta).item()))
         val_loss = float(np.mean(val_losses))
         epochs_trained = epoch + 1
         if val_loss < best_val - 1e-6:
@@ -415,6 +486,7 @@ def train_predict_fold(
         baseline_scaler.transform(baseline_t[test_idx]),
         drug_scaler.transform(drug_embeddings[examples.iloc[test_idx]["embedding_idx"].astype(int)]),
         donor_x[test_idx],
+        mgm2_scaler.transform(mgm2_features[test_idx]) if mgm2_scaler is not None and mgm2_features is not None else None,
         np.zeros_like(delta_t[test_idx], dtype=np.float32),
         config.batch_size,
         False,
@@ -422,8 +494,8 @@ def train_predict_fold(
     pred_scaled = []
     with torch.no_grad():
         for batch in test_loader:
-            baseline_x, drug_x, donor_batch, _ = [item.to(device) for item in batch]
-            pred_scaled.append(model(baseline_x, drug_x, donor_batch).cpu().numpy())
+            baseline_x, drug_x, donor_batch, mgm2_batch, _ = [item.to(device) for item in batch]
+            pred_scaled.append(model(baseline_x, drug_x, donor_batch, mgm2_batch).cpu().numpy())
     pred_delta_t = delta_scaler.inverse_transform(np.concatenate(pred_scaled, axis=0))
     pred_post_t = baseline_t[test_idx] + pred_delta_t
     pred_post = inverse_transform_profiles(pred_post_t, config.transform, config.pseudocount)
@@ -437,6 +509,7 @@ def run_mode(
     delta_profiles: np.ndarray,
     drug_embeddings: np.ndarray,
     donor_categories: List[str],
+    mgm2_features: Optional[np.ndarray],
     mode: str,
     config: MLPConfig,
     device: torch.device,
@@ -446,9 +519,15 @@ def run_mode(
     frames = []
     prediction_metadata: List[pd.DataFrame] = []
     prediction_matrices: Dict[str, List[np.ndarray]] = {}
-    for fold_idx, (train_idx, test_idx, group_label) in enumerate(baseline_utils.iter_leave_one_groups(examples, mode)):
-        if config.max_folds is not None and fold_idx >= config.max_folds:
-            break
+    folds = list(baseline_utils.iter_leave_one_groups(examples, mode))
+    if config.max_folds is not None:
+        if config.fold_selection == "random":
+            rng = np.random.default_rng(config.fold_subset_seed if config.fold_subset_seed is not None else config.seed)
+            selected = np.sort(rng.choice(len(folds), size=min(config.max_folds, len(folds)), replace=False))
+            folds = [folds[int(idx)] for idx in selected]
+        else:
+            folds = folds[: config.max_folds]
+    for fold_idx, (train_idx, test_idx, group_label) in enumerate(folds):
         predictions = {}
         if config.include_mean_baselines:
             predictions.update(
@@ -467,11 +546,13 @@ def run_mode(
             post_profiles,
             drug_embeddings,
             donor_categories,
+            mgm2_features,
             mode,
             config,
             device,
         )
-        predictions["mlp_delta"] = pred_mlp
+        method_name = "mlp_delta" if mgm2_features is None else f"hybrid_mlp_{config.mgm2_feature_mode}"
+        predictions[method_name] = pred_mlp
         predictions = finalize_raw_predictions(
             predictions,
             clip_nonnegative=config.clip_nonnegative,
@@ -516,6 +597,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split_modes", nargs="+", choices=["pair", "drug", "donor"], default=["pair"])
     parser.add_argument("--top_k_otus", type=int, default=1024)
     parser.add_argument("--max_folds", type=int, default=20, help="Fold cap for quick runs; use 0 for full LOO")
+    parser.add_argument("--fold_selection", choices=["first", "random"], default="first")
+    parser.add_argument("--fold_subset_seed", type=int, default=None)
     parser.add_argument("--hidden_size", type=int, default=256)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--batch_size", type=int, default=64)
@@ -531,6 +614,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no_clip_nonnegative", action="store_true", help="Disable nonnegative clipping before raw-space save/eval")
     parser.add_argument("--normalize_prediction", choices=["none", "topk"], default="none", help="Optional normalization after clipping")
     parser.add_argument("--no_mean_baselines", action="store_true")
+    parser.add_argument("--mgm2_cache", type=Path, default=None, help="Optional MGM2 cached backbone file to append frozen features to the MLP")
+    parser.add_argument("--mgm2_feature_mode", choices=["none", "cls", "mean", "cls_mean"], default="none")
     parser.add_argument("--device", type=str, default="auto")
     return parser.parse_args()
 
@@ -568,6 +653,10 @@ def main() -> None:
         normalize_prediction=args.normalize_prediction,
         include_mean_baselines=not args.no_mean_baselines,
         device=str(device),
+        fold_selection=args.fold_selection,
+        fold_subset_seed=args.fold_subset_seed,
+        mgm2_cache=str(args.mgm2_cache) if args.mgm2_cache is not None else None,
+        mgm2_feature_mode=args.mgm2_feature_mode,
     )
     with (output_dir / "config.json").open("w", encoding="utf-8") as handle:
         json.dump(asdict(config), handle, indent=2)
@@ -581,6 +670,9 @@ def main() -> None:
     print("Loading profile arrays...", flush=True)
     baseline_profiles, post_profiles, delta_profiles = baseline_utils.build_profile_arrays(data_dir, examples, selected_otus)
     donor_categories = sorted(examples["Donor"].astype(str).unique())
+    mgm2_features = load_mgm2_cache_features(args.mgm2_cache, examples, args.mgm2_feature_mode)
+    if mgm2_features is not None:
+        print(f"Loaded MGM2 features: {mgm2_features.shape} from {args.mgm2_cache}", flush=True)
 
     all_metrics = []
     for mode in args.split_modes:
@@ -592,6 +684,7 @@ def main() -> None:
             delta_profiles,
             drug_embeddings,
             donor_categories,
+            mgm2_features,
             mode,
             config,
             device,
