@@ -40,7 +40,7 @@ LEVEL_LABELS = ["L1", "L2", "L3", "L4", "L5"]
 
 LOCAL_TRAIN_META = Path("data/downstreams/MGnify_mst/train_meta_split.csv")
 LOCAL_TEST_META = Path("data/downstreams/MGnify_mst/test_meta_split.csv")
-MGM1_DIR = Path("/home/zhanghaohong/data6/projects/MGM2Benchmarks/MGnify_mst/MGM/finetune_outputs")
+MGM1_DIR = Path("/home/zhanghaohong/data6/projects/MGM2Benchmarks/MGnify_mst/MGM/scratch_outputs")
 DP_DIR = Path("/home/zhanghaohong/data6/projects/MGM2Benchmarks/MGnify_mst/deepphylo/results/benchmark_raw")
 EXPERT_DIR = Path("/home/zhanghaohong/data6/projects/MGM2Benchmarks/MGnify_mst/expert/outputs")
 EXPERT_TRAIN_META = Path("/home/zhanghaohong/data6/projects/MGM2Benchmarks/MGnify_mst/expert/train_meta.csv")
@@ -469,6 +469,7 @@ MODELS = {
     "MGM2-small": eval_mgm2("scale_small"),
     "MGM2-medium": eval_mgm2("scale_medium"),
     "MGM2-large": eval_mgm2("scale_large"),
+    "MGM2-xlarge": eval_mgm2("scale_xlarge"),
 }
 
 print(
@@ -529,7 +530,7 @@ plot_colors = {
     "MGM2-large": "#00897B",
     "MGM2-xlarge": "#6A1B9A",
 }
-plot_order = ["RF", "Expert", "DeepPhylo", "MGM1", "MGM2-small", "MGM2-medium", "MGM2-large"]
+plot_order = ["RF", "Expert", "DeepPhylo", "MGM1", "MGM2-small", "MGM2-medium", "MGM2-large", "MGM2-xlarge"]
 
 x = np.arange(len(LEVELS))
 n_models = max(len(plot_order), 1)
