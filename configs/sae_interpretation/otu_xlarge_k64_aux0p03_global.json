@@ -1,0 +1,23 @@
+{
+  "name": "otu_xlarge_k64_aux0p03_global",
+  "activations": "data/sae/pretrain_xlarge_sample50k/mgm2_scale_xlarge_last_hidden_activations.h5",
+  "tokens": "data/sae/pretrain_xlarge_sample50k/tokens.csv.gz",
+  "samples": "data/sae/pretrain_xlarge_sample50k/samples.csv",
+  "taxonomy_allinfo": "/data6/zhanghaohong/databases/microbeatals/otu99/otus.99.allinfo",
+  "taxonomy": "/data6/zhanghaohong/databases/microbeatals/otus.info.tsv",
+  "sae_checkpoint": "outputs_sae/mgm2_xlarge_otu_batchtopk_grid_d4096/k64_aux0p03/best.pt",
+  "output_dir": "outputs_sae_interpretation/otu_xlarge_k64_aux0p03_global",
+  "background_metadata": "outputs_sae_interpretation/otu_xlarge_k64_aux0p03_global/background_metadata.json",
+  "description_splits": ["train", "val"],
+  "test_split": "test",
+  "activation_source": "dense_encoder_relu",
+  "feature_scores": "outputs_sae_interpretation/otu_xlarge_k64_aux0p03_global/feature_scores.csv",
+  "feature_selection_metric": "activation_sum",
+  "feature_score_batch_size": 512,
+  "feature_lookup_batch_size": 256,
+  "chunk_size": 262144,
+  "max_events_per_feature": 5000,
+  "max_examples_per_feature": 100,
+  "device": "cpu",
+  "num_threads": 16
+}
