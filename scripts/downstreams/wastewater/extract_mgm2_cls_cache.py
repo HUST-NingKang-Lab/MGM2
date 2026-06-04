@@ -139,11 +139,17 @@ def _resolve_plant_embeddings(
     ntv3_embeddings: np.ndarray,
     fallback_map: Dict[str, np.ndarray],
     global_embedding: np.ndarray,
+    plant: str | None = None,
 ) -> Tuple[np.ndarray, Dict[str, int]]:
     resolved = []
     sources = Counter()
     for asv_id in asv_ids:
         asv_id = str(asv_id)
+        ntv3_key = f"{plant}::{asv_id}" if plant else asv_id
+        if ntv3_key in ntv3_index:
+            resolved.append(ntv3_embeddings[ntv3_index[ntv3_key]])
+            sources["ntv3"] += 1
+            continue
         if asv_id in ntv3_index:
             resolved.append(ntv3_embeddings[ntv3_index[asv_id]])
             sources["ntv3"] += 1
@@ -280,6 +286,7 @@ def main():
             ntv3_embeddings,
             fallback_map,
             global_embedding,
+            plant=plant,
         )
         source_counts[plant] = counts
         asv_universes[plant] = asv_ids

@@ -119,6 +119,7 @@ def main():
             ntv3_embeddings,
             fallback_map,
             global_embedding,
+            plant=plant,
         )
         source_counts[plant] = counts
         asv_universes[plant] = asv_ids

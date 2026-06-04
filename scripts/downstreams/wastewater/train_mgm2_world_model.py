@@ -139,6 +139,10 @@ def _collect_records(dataset: Dict, plants: Iterable[str] | None):
     return records
 
 
+def _selected_plants(records: List[Dict]) -> str:
+    return "|".join(sorted({record["plant"] for record in records}))
+
+
 def _split_train_tail_holdout(records: List[Dict], val_ratio: float, limit_train_windows: int = 0):
     train = [record for record in records if record["split"] == "train"]
     if limit_train_windows > 0:
@@ -354,6 +358,7 @@ def main():
     records = _collect_records(dataset, args.plants)
     if not records:
         raise ValueError("no records found")
+    selected_plants = _selected_plants(records)
 
     train_records, holdout_records = _split_train_tail_holdout(records, args.train_tail_val_ratio, args.limit_train_windows)
     if not train_records:
@@ -427,6 +432,7 @@ def main():
         [
             {
                 "mode": args.mode,
+                "selected_plants": selected_plants,
                 "train_windows": len(train_records),
                 "train_tail_holdout_windows": len(holdout_records),
                 "best_train_tail_holdout_loss": best_holdout,
