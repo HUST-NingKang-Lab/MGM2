@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build a one-round pretraining sample/token manifest for MGM2-xlarge SAE training.
 
-The script creates a sample-level split and a token-level manifest. It does not
+The script creates a sample-level split and a token-level manifest containing
+CLS and all valid OTU tokens for each sampled pretraining sample. It does not
 extract xlarge activations; later extraction should consume tokens.csv.gz.
 """
 
@@ -18,8 +19,6 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
-import numpy as np
-
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
@@ -27,7 +26,7 @@ sys.path.insert(0, str(project_root))
 DEFAULT_DATA_FILE = Path("data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.pkl")
 DEFAULT_METADATA = Path("/data6/zhanghaohong/databases/microbeatals/samples.env.info.tsv")
 DEFAULT_OUTPUT_DIR = Path("data/sae/pretrain_xlarge_sample50k")
-PRIMARY_QUOTAS = {
+DEFAULT_PRIMARY_QUOTAS = {
     "animal": 10_000,
     "aquatic": 10_000,
     "soil": 10_000,
@@ -41,13 +40,34 @@ def parse_args():
     parser.add_argument("--data_file", type=Path, default=DEFAULT_DATA_FILE)
     parser.add_argument("--metadata_file", type=Path, default=DEFAULT_METADATA)
     parser.add_argument("--output_dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--tokens_per_sample", type=int, default=128)
+    parser.add_argument("--quota_scale", type=float, default=1.0, help="Scale default primary quotas and WGS supplement")
+    parser.add_argument("--animal_quota", type=int, default=None)
+    parser.add_argument("--aquatic_quota", type=int, default=None)
+    parser.add_argument("--soil_quota", type=int, default=None)
+    parser.add_argument("--plant_quota", type=int, default=None)
+    parser.add_argument("--missing_quota", type=int, default=None)
     parser.add_argument("--wgs_supplement", type=int, default=5_000)
     parser.add_argument("--val_fraction", type=float, default=0.05)
     parser.add_argument("--test_fraction", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max_bucket_fraction", type=float, default=0.25)
+    parser.add_argument("--exclude_cls", action="store_true", help="Do not include CLS token rows")
     return parser.parse_args()
+
+
+def primary_quotas_from_args(args) -> Dict[str, int]:
+    scaled = {key: int(round(value * args.quota_scale)) for key, value in DEFAULT_PRIMARY_QUOTAS.items()}
+    overrides = {
+        "animal": args.animal_quota,
+        "aquatic": args.aquatic_quota,
+        "soil": args.soil_quota,
+        "plant": args.plant_quota,
+        "<missing>": args.missing_quota,
+    }
+    for key, value in overrides.items():
+        if value is not None:
+            scaled[key] = int(value)
+    return scaled
 
 
 def normalize_sample_id(value) -> str:
@@ -185,12 +205,13 @@ def build_sample_manifest(metadata: Dict[str, Dict[str, str]], args) -> List[Dic
     rng = random.Random(args.seed)
     selected: List[Dict] = []
     selected_ids = set()
+    primary_quotas = primary_quotas_from_args(args)
 
     by_primary: Dict[str, List[Dict]] = defaultdict(list)
     for row in metadata.values():
         by_primary[row["primary_env"]].append(row)
 
-    for primary, quota in PRIMARY_QUOTAS.items():
+    for primary, quota in primary_quotas.items():
         group_selected = select_env_stratified(
             by_primary.get(primary, []),
             quota,
@@ -237,13 +258,15 @@ def reverse_otu_map(otu_id_to_idx: Dict) -> Dict[int, str]:
 
 
 def valid_token_arrays(data: Dict, sample_index: int):
+    import numpy as np
+
     input_ids = np.asarray(data["input_ids"][sample_index])
     attention_mask = np.asarray(data["attention_mask"][sample_index])
     processed_abundances = np.asarray(data["abundance_values"][sample_index], dtype=np.float32)
     valid = (attention_mask == 1) & (input_ids != -1)
     positions = np.flatnonzero(valid)
     # Pretraining abundance_values are already log10(abundance) + 2, clipped to [-2, 2].
-    # Convert back to a positive relative-abundance scale for sampling weights and metadata.
+    # Convert back to a positive relative-abundance scale for metadata.
     relative_abundances = np.power(10.0, processed_abundances[positions] - 2.0).astype(np.float32)
     return (
         positions,
@@ -253,94 +276,40 @@ def valid_token_arrays(data: Dict, sample_index: int):
     )
 
 
-def compute_selected_otu_frequency(data: Dict, sample_manifest: Sequence[Dict], sample_to_index: Dict[str, int]) -> Counter:
-    counts = Counter()
-    for row in sample_manifest:
-        sample_index = sample_to_index[row["sample_id"]]
-        _, otu_indices, _, _ = valid_token_arrays(data, sample_index)
-        counts.update(map(int, otu_indices))
-    return counts
-
-
-def _weighted_choice_without_replacement(
-    candidates: List[int],
-    weights: np.ndarray,
-    n: int,
-    rng: np.random.Generator,
-) -> List[int]:
-    if n <= 0 or not candidates:
-        return []
-    n = min(n, len(candidates))
-    weights = np.asarray(weights, dtype=np.float64)
-    if not np.isfinite(weights).all() or weights.sum() <= 0:
-        probabilities = None
-    else:
-        probabilities = weights / weights.sum()
-    picked = rng.choice(np.asarray(candidates), size=n, replace=False, p=probabilities)
-    return [int(idx) for idx in picked.tolist()]
-
-
-def sample_tokens_for_sample(
+def build_token_rows_for_sample(
     data: Dict,
     sample_index: int,
-    tokens_per_sample: int,
-    otu_frequency: Counter,
-    rng: np.random.Generator,
+    include_cls: bool,
 ) -> List[Dict]:
     positions, otu_indices, processed_abundances, relative_abundances = valid_token_arrays(data, sample_index)
     n_valid = len(positions)
-    if n_valid == 0:
-        return []
-
-    order_desc = np.argsort(-relative_abundances, kind="stable")
-    abundance_rank_by_local = np.empty(n_valid, dtype=np.int64)
-    abundance_rank_by_local[order_desc] = np.arange(1, n_valid + 1)
-
-    local_candidates = list(range(n_valid))
-    picked_sources: Dict[int, str] = {}
-    if n_valid <= tokens_per_sample:
-        for local_idx in local_candidates:
-            picked_sources[local_idx] = "all_nonzero"
-    else:
-        abundance_n = tokens_per_sample // 2
-        uniform_n = tokens_per_sample // 4
-        rare_n = tokens_per_sample - abundance_n - uniform_n
-
-        abundance_pick = _weighted_choice_without_replacement(local_candidates, relative_abundances, abundance_n, rng)
-        for local_idx in abundance_pick:
-            picked_sources[local_idx] = "abundance_weighted"
-
-        remaining = [idx for idx in local_candidates if idx not in picked_sources]
-        uniform_pick = _weighted_choice_without_replacement(remaining, np.ones(len(remaining)), uniform_n, rng)
-        for local_idx in uniform_pick:
-            picked_sources[local_idx] = "uniform_nonzero"
-
-        remaining = [idx for idx in local_candidates if idx not in picked_sources]
-        rare_weights = np.asarray(
-            [1.0 / np.sqrt(max(1, otu_frequency[int(otu_indices[idx])])) for idx in remaining],
-            dtype=np.float64,
-        )
-        rare_pick = _weighted_choice_without_replacement(remaining, rare_weights, rare_n, rng)
-        for local_idx in rare_pick:
-            picked_sources[local_idx] = "rare_boosted"
-
-        remaining = [idx for idx in local_candidates if idx not in picked_sources]
-        if len(picked_sources) < tokens_per_sample and remaining:
-            fill_n = tokens_per_sample - len(picked_sources)
-            fill_pick = _weighted_choice_without_replacement(remaining, np.ones(len(remaining)), fill_n, rng)
-            for local_idx in fill_pick:
-                picked_sources[local_idx] = "fill_uniform"
-
     rows = []
-    for local_idx, source in sorted(picked_sources.items(), key=lambda item: int(positions[item[0]])):
+    if include_cls:
+        rows.append(
+            {
+                "token_position": 0,
+                "token_type": "cls",
+                "otu_index": -1,
+                "abundance": 0.0,
+                "processed_abundance": 0.0,
+                "abundance_rank": 0,
+            }
+        )
+
+    if n_valid == 0:
+        return rows
+
+    order_desc = sorted(range(n_valid), key=lambda idx: (-float(relative_abundances[idx]), int(positions[idx])))
+    abundance_rank_by_local = {local_idx: rank for rank, local_idx in enumerate(order_desc, start=1)}
+    for local_idx in range(n_valid):
         rows.append(
             {
                 "token_position": int(positions[local_idx]),
+                "token_type": "otu",
                 "otu_index": int(otu_indices[local_idx]),
                 "abundance": float(relative_abundances[local_idx]),
                 "processed_abundance": float(processed_abundances[local_idx]),
                 "abundance_rank": int(abundance_rank_by_local[local_idx]),
-                "token_sampling_source": source,
             }
         )
     return rows
@@ -353,8 +322,7 @@ def write_outputs(data: Dict, sample_manifest: List[Dict], args) -> Dict:
     sample_ids = [normalize_sample_id(sample_id) for sample_id in data["samples"]]
     sample_to_index = {sample_id: idx for idx, sample_id in enumerate(sample_ids)}
     idx_to_otu_id = reverse_otu_map(data["otu_id_to_idx"])
-    otu_frequency = compute_selected_otu_frequency(data, sample_manifest, sample_to_index)
-    rng = np.random.default_rng(args.seed + 1000)
+    include_cls = not args.exclude_cls
 
     sample_fields = [
         "sample_id",
@@ -378,18 +346,18 @@ def write_outputs(data: Dict, sample_manifest: List[Dict], args) -> Dict:
         "primary_env",
         "env_first2",
         "technology",
+        "token_type",
         "token_position",
         "otu_index",
         "otu_id",
         "abundance",
         "processed_abundance",
         "abundance_rank",
-        "token_sampling_source",
     ]
 
     split_counts = Counter()
     group_counts = Counter()
-    token_source_counts = Counter()
+    token_type_counts = Counter()
     token_count_total = 0
     with (output_dir / "samples.csv").open("w", newline="") as sample_handle, gzip.open(
         output_dir / "tokens.csv.gz", "wt", newline=""
@@ -403,7 +371,7 @@ def write_outputs(data: Dict, sample_manifest: List[Dict], args) -> Dict:
             sample_id = row["sample_id"]
             sample_index = sample_to_index[sample_id]
             positions, _, _, _ = valid_token_arrays(data, sample_index)
-            token_rows = sample_tokens_for_sample(data, sample_index, args.tokens_per_sample, otu_frequency, rng)
+            token_rows = build_token_rows_for_sample(data, sample_index, include_cls=include_cls)
 
             sample_out = {
                 **row,
@@ -416,7 +384,7 @@ def write_outputs(data: Dict, sample_manifest: List[Dict], args) -> Dict:
             group_counts[(row["quota_group"], row["split"])] += 1
 
             for token_row in token_rows:
-                token_source_counts[token_row["token_sampling_source"]] += 1
+                token_type_counts[token_row["token_type"]] += 1
                 token_count_total += 1
                 token_writer.writerow(
                     {
@@ -427,13 +395,13 @@ def write_outputs(data: Dict, sample_manifest: List[Dict], args) -> Dict:
                         "primary_env": row["primary_env"],
                         "env_first2": row["env_first2"],
                         "technology": row["technology"],
+                        "token_type": token_row["token_type"],
                         "token_position": token_row["token_position"],
                         "otu_index": token_row["otu_index"],
-                        "otu_id": idx_to_otu_id.get(token_row["otu_index"], ""),
+                        "otu_id": idx_to_otu_id.get(token_row["otu_index"], "CLS" if token_row["token_type"] == "cls" else ""),
                         "abundance": token_row["abundance"],
                         "processed_abundance": token_row["processed_abundance"],
                         "abundance_rank": token_row["abundance_rank"],
-                        "token_sampling_source": token_row["token_sampling_source"],
                     }
                 )
 
@@ -441,12 +409,16 @@ def write_outputs(data: Dict, sample_manifest: List[Dict], args) -> Dict:
         "data_file": str(args.data_file),
         "metadata_file": str(args.metadata_file),
         "seed": args.seed,
-        "tokens_per_sample": args.tokens_per_sample,
+        "quota_scale": args.quota_scale,
+        "primary_quotas": primary_quotas_from_args(args),
+        "wgs_supplement": args.wgs_supplement,
+        "include_cls": include_cls,
+        "token_policy": "all_valid_tokens",
         "num_samples": len(sample_manifest),
         "num_tokens": token_count_total,
         "split_counts": dict(split_counts),
         "quota_split_counts": {f"{group}|{split}": count for (group, split), count in sorted(group_counts.items())},
-        "token_sampling_source_counts": dict(token_source_counts),
+        "token_type_counts": dict(token_type_counts),
         "primary_env_counts": dict(Counter(row["primary_env"] for row in sample_manifest)),
         "technology_counts": dict(Counter(row["technology"] for row in sample_manifest)),
     }

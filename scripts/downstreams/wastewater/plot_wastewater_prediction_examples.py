@@ -28,8 +28,8 @@ MODEL_PATHS = {
     "vector_tcn":        Path("outputs_downstreams/wastewater/vector_temporal/tcn_top200/predictions.csv.gz"),
     "hybrid_tcn":        Path("outputs_downstreams/wastewater/hybrid/vector_tcn_persistence_top200/predictions.csv.gz"),
     "token_xattn_small": Path("outputs_downstreams/wastewater/mgm2_token_cross_attention/scale_small_top200/predictions.csv.gz"),
-    "mae_xlarge":        Path("outputs_downstreams/wastewater/mgm2_world_model/mae_scale_xlarge_top200/predictions.csv.gz"),
-    "jepa_xlarge":       Path("outputs_downstreams/wastewater/mgm2_world_model/jepa_scale_xlarge_top200/predictions.csv.gz"),
+    "mae_xlarge":        Path("outputs_downstreams/wastewater/mgm2_world_model_ntv3_asv/mae_scale_xlarge_top200/predictions.csv.gz"),
+    "jepa_xlarge":       Path("outputs_downstreams/wastewater/mgm2_world_model_ntv3_asv/jepa_scale_xlarge_top200/predictions.csv.gz"),
 }
 MODEL_NAME_FILTERS = {
     "persistence":       "persistence",

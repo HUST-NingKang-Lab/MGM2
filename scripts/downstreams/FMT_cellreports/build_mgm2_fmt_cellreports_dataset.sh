@@ -51,7 +51,7 @@ build_args=(
   --h5_key cellreports
   --ntv3_embedding "${OUTPUT_DIR}/community_all.cellreports_embeddings.h5"
   --output "${OUTPUT_DIR}/community_all.pkl"
-  --top_k_otus 0
+  --top_k_otus 768
 )
 if [[ "${H5_LOAD_ALL}" == "1" ]]; then
   build_args+=(--h5_load_all)
