@@ -43,6 +43,17 @@ class FMTCommunityClassificationLightningModule(pl.LightningModule):
         return self.model.load_pretrained_backbone(state_dict, strict=True)
 
     def forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        if "recipient_input_ids" in batch:
+            return self.model(
+                input_ids=batch["recipient_input_ids"],
+                embeddings=batch["recipient_embeddings"],
+                recipient_abundance_values=batch["recipient_abundance_values"],
+                donor_abundance_values=batch["donor_abundance_values"],
+                attention_mask=batch["recipient_attention_mask"],
+                donor_input_ids=batch["donor_input_ids"],
+                donor_embeddings=batch["donor_embeddings"],
+                donor_attention_mask=batch["donor_attention_mask"],
+            )
         return self.model(
             input_ids=batch["input_ids"],
             embeddings=batch["embeddings"],
