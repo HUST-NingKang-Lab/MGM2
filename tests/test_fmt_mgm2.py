@@ -225,7 +225,7 @@ class FMTMGM2Tests(unittest.TestCase):
             np.testing.assert_allclose(sample["donor_abundance_raw"][1:].numpy(), [0.2, 0.0, 0.8])
             np.testing.assert_allclose(sample["recipient_abundance_raw"][1:].numpy(), [0.0, 1.0, 0.0])
 
-    def test_classification_collator_and_model_emit_response_logits(self):
+    def test_classification_collator_and_model_emit_response_logits_from_cls_tokens(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._write_fmt_inputs(root)
@@ -245,6 +245,7 @@ class FMTMGM2Tests(unittest.TestCase):
                 dropout=0.0,
             )
 
+            self.assertEqual(model.classifier[0].in_features, config.model.hidden_size * 2)
             outputs = model(
                 input_ids=batch["input_ids"],
                 embeddings=batch["embeddings"],
@@ -254,7 +255,98 @@ class FMTMGM2Tests(unittest.TestCase):
             )
 
             self.assertEqual(outputs["logits"].shape, (2, 2))
-            self.assertEqual(outputs["cross_attention_weights"].shape[0], 2)
+            self.assertNotIn("cross_attention_weights", outputs)
+
+    def test_sparse_classification_keeps_per_sample_tokens_for_mgm2_cls_classifier(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._write_fmt_inputs(root)
+            dataset = FMTCommunityClassificationDataset(
+                root / "community.pkl",
+                root / "response_meta.csv",
+                root / "resolved.h5",
+                sequence_mode="sparse",
+            )
+            sample = dataset[0]
+
+            self.assertEqual(sample["recipient_input_ids"].tolist(), [-1, 1])
+            self.assertEqual(sample["donor_input_ids"].tolist(), [-1, 0, 2])
+            self.assertEqual(sample["recipient_embeddings"].shape, (2, 4))
+            self.assertEqual(sample["donor_embeddings"].shape, (3, 4))
+
+            batch = FMTCommunityClassificationCollator()([sample, sample])
+            config = MGM2Config()
+            config.model.embedding_dim = 4
+            config.model.hidden_size = 8
+            config.model.num_hidden_layers = 1
+            config.model.num_attention_heads = 2
+            config.model.intermediate_size = 16
+            model = FMTCommunityClassificationModel(config.model.__dict__, num_classes=2, cross_attention_heads=2, dropout=0.0)
+
+            outputs = model(
+                input_ids=batch["recipient_input_ids"],
+                embeddings=batch["recipient_embeddings"],
+                recipient_abundance_values=batch["recipient_abundance_values"],
+                donor_abundance_values=batch["donor_abundance_values"],
+                attention_mask=batch["recipient_attention_mask"],
+                donor_input_ids=batch["donor_input_ids"],
+                donor_embeddings=batch["donor_embeddings"],
+                donor_attention_mask=batch["donor_attention_mask"],
+            )
+
+            self.assertEqual(outputs["logits"].shape, (2, 2))
+            self.assertNotIn("cross_attention_weights", outputs)
+
+    def test_sparse_classification_caps_nonzero_otus_at_768(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            n_features = 800
+            with h5py.File(root / "resolved.h5", "w") as handle:
+                handle.create_dataset("embeddings", data=np.ones((n_features, 4), dtype=np.float32))
+                handle.create_dataset("otu_ids", data=np.asarray([f"otu_{idx}".encode() for idx in range(n_features)]))
+
+            input_ids = np.concatenate([[-1], np.arange(n_features, dtype=np.int64)])
+            abundances = np.concatenate([[0.0], np.linspace(1.0, 0.001, n_features, dtype=np.float32)])
+            payload = {
+                "samples": ["donor_1", "recipient_1"],
+                "otu_data": {
+                    sample_id: {
+                        "input_ids": input_ids.copy(),
+                        "attention_mask": np.ones(n_features + 1, dtype=np.int64),
+                        "abundance_values": abundances.copy(),
+                    }
+                    for sample_id in ["donor_1", "recipient_1"]
+                },
+                "otu_id_to_idx": {f"otu_{idx}": idx for idx in range(n_features)},
+                "ntv3_embedding_path": str(root / "resolved.h5"),
+                "format_version": "mgm2_v1",
+            }
+            with (root / "community.pkl").open("wb") as handle:
+                pickle.dump(payload, handle)
+            pd.DataFrame(
+                [
+                    {
+                        "TargetID": "fmt_1",
+                        "fmt_id": "fmt_1",
+                        "donor_sample_id": "donor_1",
+                        "recipient_sample_id": "recipient_1",
+                        "response_label": "responder",
+                    }
+                ]
+            ).to_csv(root / "response_meta.csv", index=False)
+
+            dataset = FMTCommunityClassificationDataset(
+                root / "community.pkl",
+                root / "response_meta.csv",
+                root / "resolved.h5",
+                sequence_mode="sparse",
+            )
+            sample = dataset[0]
+
+            self.assertEqual(len(sample["recipient_input_ids"]), 769)
+            self.assertEqual(len(sample["donor_input_ids"]), 769)
+            self.assertEqual(sample["recipient_input_ids"][0].item(), -1)
+            self.assertEqual(sample["recipient_input_ids"][-1].item(), 767)
 
     def test_mlp_classification_baseline_builds_response_arrays(self):
         module = _load_fmt_mlp_classification_module()
