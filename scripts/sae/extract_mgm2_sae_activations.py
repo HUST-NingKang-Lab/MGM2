@@ -19,7 +19,7 @@ from tqdm import tqdm
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
-DEFAULT_DATA_FILE = Path("data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.pkl")
+DEFAULT_DATA_FILE = Path("data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.mgm2v1.768.pkl")
 DEFAULT_MANIFEST_DIR = Path("data/sae/pretrain_xlarge_sample50k")
 DEFAULT_STAGE2_ROOT = Path("outputs_grid/stage2/20260505_094404")
 DEFAULT_NTV3 = Path("ntv3_embeddings/otus_99_embeddings.h5")
@@ -61,6 +61,29 @@ def parse_args():
 def _load_pretrain_data(path: Path) -> Dict:
     with path.open("rb") as handle:
         return pickle.load(handle)
+
+
+def _sample_data_at(data: Dict, sample_index: int) -> Dict:
+    if "otu_data" in data:
+        sample_id = str(data["samples"][sample_index]).strip()
+        return data["otu_data"][sample_id]
+    return {
+        "input_ids": data["input_ids"][sample_index],
+        "attention_mask": data["attention_mask"][sample_index],
+        "abundance_values": data["abundance_values"][sample_index],
+    }
+
+
+def _transform_abundance_for_model(raw_abundance: np.ndarray) -> np.ndarray:
+    processed = np.asarray(raw_abundance, dtype=np.float32).copy()
+    processed = np.nan_to_num(processed, nan=0.0, posinf=2.0, neginf=0.0)
+    processed[processed < 0] = 0.0
+    floor_mask = (processed > 0) & (processed < 1e-4)
+    processed[floor_mask] = 1e-4
+    positive_mask = processed > 0
+    processed[positive_mask] = np.log10(processed[positive_mask]) + 2.0
+    processed[positive_mask] = np.clip(processed[positive_mask], -2.0, 2.0)
+    return processed
 
 
 def _load_samples(path: Path, splits: Sequence[str], token_type: str, limit_samples: int) -> List[Dict]:
@@ -109,9 +132,11 @@ def _load_ntv3_embeddings(path: Path) -> np.ndarray:
 
 
 def _token_rows_for_sample(data: Dict, sample_index: int, token_type: str):
-    input_ids = np.asarray(data["input_ids"][sample_index], dtype=np.int64)
-    attention_mask = np.asarray(data["attention_mask"][sample_index], dtype=np.int64)
-    processed_abundance = np.asarray(data["abundance_values"][sample_index], dtype=np.float32)
+    sample_data = _sample_data_at(data, sample_index)
+    input_ids = np.asarray(sample_data["input_ids"], dtype=np.int64)
+    attention_mask = np.asarray(sample_data["attention_mask"], dtype=np.int64)
+    raw_abundance = np.asarray(sample_data["abundance_values"], dtype=np.float32)
+    processed_abundance = _transform_abundance_for_model(raw_abundance)
     valid_otu_positions = np.flatnonzero((attention_mask == 1) & (input_ids != -1))
 
     rows = []
@@ -127,8 +152,8 @@ def _token_rows_for_sample(data: Dict, sample_index: int, token_type: str):
             }
         )
     if token_type in {"all", "otu"} and len(valid_otu_positions):
-        relative_abundance = np.power(10.0, processed_abundance[valid_otu_positions] - 2.0).astype(np.float32)
-        order_desc = sorted(range(len(valid_otu_positions)), key=lambda idx: (-float(relative_abundance[idx]), int(valid_otu_positions[idx])))
+        valid_raw_abundance = raw_abundance[valid_otu_positions].astype(np.float32)
+        order_desc = sorted(range(len(valid_otu_positions)), key=lambda idx: (-float(valid_raw_abundance[idx]), int(valid_otu_positions[idx])))
         ranks = {local_idx: rank for rank, local_idx in enumerate(order_desc, start=1)}
         for local_idx, position in enumerate(valid_otu_positions):
             rows.append(
@@ -137,7 +162,7 @@ def _token_rows_for_sample(data: Dict, sample_index: int, token_type: str):
                     "token_position": int(position),
                     "otu_index": int(input_ids[position]),
                     "processed_abundance": float(processed_abundance[position]),
-                    "abundance": float(relative_abundance[local_idx]),
+                    "abundance": float(raw_abundance[position]),
                     "abundance_rank": int(ranks[local_idx]),
                 }
             )
@@ -145,7 +170,7 @@ def _token_rows_for_sample(data: Dict, sample_index: int, token_type: str):
 
 
 def _build_batch(data: Dict, sample_rows: Sequence[Dict], ntv3_embeddings: np.ndarray):
-    seq_lengths = [len(data["input_ids"][row["sample_index"]]) for row in sample_rows]
+    seq_lengths = [len(_sample_data_at(data, row["sample_index"])["input_ids"]) for row in sample_rows]
     max_len = max(seq_lengths)
     batch_size = len(sample_rows)
     embedding_dim = ntv3_embeddings.shape[1]
@@ -156,9 +181,10 @@ def _build_batch(data: Dict, sample_rows: Sequence[Dict], ntv3_embeddings: np.nd
 
     for batch_idx, row in enumerate(sample_rows):
         sample_index = row["sample_index"]
-        input_ids = np.asarray(data["input_ids"][sample_index], dtype=np.int64)
-        attention_mask = np.asarray(data["attention_mask"][sample_index], dtype=np.int64)
-        abundance = np.asarray(data["abundance_values"][sample_index], dtype=np.float32)
+        sample_data = _sample_data_at(data, sample_index)
+        input_ids = np.asarray(sample_data["input_ids"], dtype=np.int64)
+        attention_mask = np.asarray(sample_data["attention_mask"], dtype=np.int64)
+        abundance = _transform_abundance_for_model(np.asarray(sample_data["abundance_values"], dtype=np.float32))
         seq_len = len(input_ids)
         input_ids_batch[batch_idx, :seq_len] = input_ids
         attention_mask_batch[batch_idx, :seq_len] = attention_mask
@@ -176,7 +202,7 @@ def _iter_dynamic_batches(data: Dict, sample_rows: Sequence[Dict], start_row: in
         max_len = 0
         while idx < len(sample_rows) and len(batch) < batch_size:
             row = sample_rows[idx]
-            seq_len = len(data["input_ids"][row["sample_index"]])
+            seq_len = len(_sample_data_at(data, row["sample_index"])["input_ids"])
             proposed_max_len = max(max_len, seq_len)
             proposed_batch_size = len(batch) + 1
             if batch and max_batch_tokens > 0 and proposed_batch_size * proposed_max_len > max_batch_tokens:
@@ -220,7 +246,7 @@ def _create_output(path: Path, num_tokens: int, hidden_size: int, dtype: str, co
 
 def _open_output_for_resume(path: Path, expected_tokens: int, hidden_size: int):
     if not path.exists():
-        raise FileNotFoundError(f"cannot resume because output does not exist: {path}")
+        return None
     handle = h5py.File(path, "r+")
     if "activations" not in handle:
         handle.close()
@@ -307,9 +333,15 @@ def main():
     output = args.output
     if args.resume:
         handle = _open_output_for_resume(output, num_tokens, hidden_size)
+    else:
+        handle = None
+
+    if handle is not None:
         start_sample_row, write_pos = _resume_offsets(handle, sample_rows)
         print(f"Resuming from sample_row={start_sample_row}, token_offset={write_pos}")
     else:
+        if args.resume:
+            print(f"Resume requested but output does not exist; creating new output: {output}")
         handle = _create_output(output, num_tokens, hidden_size, args.dtype, args.compression, args.chunk_tokens)
         _write_sample_table(handle, sample_rows, args.compression)
         handle.attrs["data_file"] = str(args.data_file)

@@ -35,6 +35,13 @@ def parse_args():
     )
     parser.add_argument("--output-dir", type=Path, default=Path("figures/sae/otu_grid"))
     parser.add_argument("--smooth-window", type=int, default=7)
+    parser.add_argument(
+        "--exclude-top-k",
+        type=int,
+        nargs="*",
+        default=[],
+        help="Top-k values to exclude from the plotted summary and curves.",
+    )
     return parser.parse_args()
 
 
@@ -211,6 +218,12 @@ def plot_curves(curves: pd.DataFrame, output_dir: Path, smooth_window: int):
 def main():
     args = parse_args()
     summary, curves = _load_grid(args.grid_dir)
+    if args.exclude_top_k:
+        excluded = set(args.exclude_top_k)
+        summary = summary[~summary["top_k"].isin(excluded)].reset_index(drop=True)
+        curves = curves[~curves["top_k"].isin(excluded)].reset_index(drop=True)
+        if summary.empty or curves.empty:
+            raise ValueError(f"No runs remain after excluding top_k values: {sorted(excluded)}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     summary.to_csv(args.output_dir / "otu_sae_grid_summary.csv", index=False)
     plot_best_summary(summary, args.output_dir)

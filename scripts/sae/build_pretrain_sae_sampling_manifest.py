@@ -23,7 +23,7 @@ project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
 
-DEFAULT_DATA_FILE = Path("data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.pkl")
+DEFAULT_DATA_FILE = Path("data/microbeatlas/otus.99.mapped.metag.minfilter.refilt.dict.mgm2v1.768.pkl")
 DEFAULT_METADATA = Path("/data6/zhanghaohong/databases/microbeatals/samples.env.info.tsv")
 DEFAULT_OUTPUT_DIR = Path("data/sae/pretrain_xlarge_sample50k")
 DEFAULT_PRIMARY_QUOTAS = {
@@ -90,6 +90,31 @@ def parse_environment(raw: str) -> tuple[str, str]:
 def load_pretrain_data(path: Path) -> Dict:
     with path.open("rb") as handle:
         return pickle.load(handle)
+
+
+def sample_data_at(data: Dict, sample_index: int) -> Dict:
+    if "otu_data" in data:
+        sample_id = normalize_sample_id(data["samples"][sample_index])
+        return data["otu_data"][sample_id]
+    return {
+        "input_ids": data["input_ids"][sample_index],
+        "attention_mask": data["attention_mask"][sample_index],
+        "abundance_values": data["abundance_values"][sample_index],
+    }
+
+
+def transform_abundance_for_model(raw_abundance):
+    import numpy as np
+
+    processed = np.asarray(raw_abundance, dtype=np.float32).copy()
+    processed = np.nan_to_num(processed, nan=0.0, posinf=2.0, neginf=0.0)
+    processed[processed < 0] = 0.0
+    floor_mask = (processed > 0) & (processed < 1e-4)
+    processed[floor_mask] = 1e-4
+    positive_mask = processed > 0
+    processed[positive_mask] = np.log10(processed[positive_mask]) + 2.0
+    processed[positive_mask] = np.clip(processed[positive_mask], -2.0, 2.0)
+    return processed
 
 
 def load_metadata_for_samples(metadata_path: Path, sample_ids: set[str]) -> Dict[str, Dict[str, str]]:
@@ -260,19 +285,18 @@ def reverse_otu_map(otu_id_to_idx: Dict) -> Dict[int, str]:
 def valid_token_arrays(data: Dict, sample_index: int):
     import numpy as np
 
-    input_ids = np.asarray(data["input_ids"][sample_index])
-    attention_mask = np.asarray(data["attention_mask"][sample_index])
-    processed_abundances = np.asarray(data["abundance_values"][sample_index], dtype=np.float32)
+    sample_data = sample_data_at(data, sample_index)
+    input_ids = np.asarray(sample_data["input_ids"])
+    attention_mask = np.asarray(sample_data["attention_mask"])
+    raw_abundances = np.asarray(sample_data["abundance_values"], dtype=np.float32)
+    processed_abundances = transform_abundance_for_model(raw_abundances)
     valid = (attention_mask == 1) & (input_ids != -1)
     positions = np.flatnonzero(valid)
-    # Pretraining abundance_values are already log10(abundance) + 2, clipped to [-2, 2].
-    # Convert back to a positive relative-abundance scale for metadata.
-    relative_abundances = np.power(10.0, processed_abundances[positions] - 2.0).astype(np.float32)
     return (
         positions,
         input_ids[positions].astype(np.int64),
         processed_abundances[positions].astype(np.float32),
-        relative_abundances,
+        raw_abundances[positions].astype(np.float32),
     )
 
 
