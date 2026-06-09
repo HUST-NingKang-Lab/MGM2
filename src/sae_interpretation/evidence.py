@@ -161,15 +161,36 @@ def _sample_concentration(events: pd.DataFrame) -> Dict[str, object]:
 
 def _taxonomy_signal(top: pd.DataFrame) -> Dict[str, object]:
     taxonomy = _taxonomic_enrichment(top)
-    best_rank = ""
-    best_value = ""
-    best_fraction = 0.0
-    for rank in ["genus", "family", "order", "class", "phylum", "kingdom"]:
-        rows = [row for row in taxonomy.get(rank, []) if row.get("value") != "unknown"]
-        if rows and float(rows[0].get("fraction", 0.0)) > best_fraction:
-            best_rank = rank
+    candidates = []
+    rank_order = ["phylum", "class", "order", "family", "genus", "species"]
+    for depth, rank in enumerate(rank_order, start=1):
+        rows = [
+            row
+            for row in taxonomy.get(rank, [])
+            if str(row.get("value", "")).strip().lower() not in {"", "unknown", "nan", "none", "null"}
+        ]
+        if rows:
+            candidates.append((rank, str(rows[0].get("value", "")), float(rows[0].get("fraction", 0.0)), depth))
+    if candidates:
+        strong_candidates = [item for item in candidates if item[2] >= 0.5]
+        if strong_candidates:
+            best_rank, best_value, best_fraction, _ = max(strong_candidates, key=lambda item: (item[3], item[2]))
+        else:
+            best_rank, best_value, best_fraction, _ = max(candidates, key=lambda item: (item[2], item[3]))
+    else:
+        rows = [
+            row
+            for row in taxonomy.get("kingdom", [])
+            if str(row.get("value", "")).strip().lower() not in {"", "unknown", "nan", "none", "null"}
+        ]
+        if rows:
+            best_rank = "kingdom"
             best_value = str(rows[0].get("value", ""))
             best_fraction = float(rows[0].get("fraction", 0.0))
+        else:
+            best_rank = ""
+            best_value = ""
+            best_fraction = 0.0
     return {
         "best_rank": best_rank,
         "best_value": best_value,

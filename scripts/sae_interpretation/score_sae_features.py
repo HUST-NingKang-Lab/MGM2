@@ -56,6 +56,7 @@ def main():
         feature_batch_size=args.feature_batch_size or int(cfg(config, "feature_score_batch_size", 512)),
         device=device,
         activation_mode=cfg(config, "activation_mode", "dense"),
+        activation_token_type=cfg(config, "activation_token_type", "auto"),
         max_chunks=args.max_chunks,
     )
     scores.to_csv(output_csv, index=False)

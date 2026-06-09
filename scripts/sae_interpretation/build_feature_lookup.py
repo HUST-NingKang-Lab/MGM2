@@ -20,10 +20,18 @@ from src.sae_interpretation.data_sources import load_combined_taxonomy_map, load
 from src.sae_interpretation.sae_features import load_sae_from_checkpoint, select_feature_ids
 
 
+def _read_feature_ids_file(path: Path) -> str:
+    data = json.loads(Path(path).read_text())
+    if isinstance(data, dict):
+        data = data.get("feature_ids", data.get("selected_feature_ids", []))
+    return ",".join(str(int(feature_id)) for feature_id in data)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("configs/sae_interpretation/otu_xlarge_k64_aux0p03.json"))
     parser.add_argument("--feature-ids", type=str, default=None)
+    parser.add_argument("--feature-ids-file", type=Path, default=None)
     parser.add_argument("--top-n-features", type=int, default=None)
     parser.add_argument("--all-features", action="store_true", help="Build lookup tables for every SAE feature.")
     parser.add_argument("--feature-scores", type=Path, default=None)
@@ -40,9 +48,9 @@ def parse_args():
 
 def main():
     args = parse_args()
-    selection_modes = [bool(args.feature_ids), bool(args.top_n_features), bool(args.all_features)]
+    selection_modes = [bool(args.feature_ids), bool(args.feature_ids_file), bool(args.top_n_features), bool(args.all_features)]
     if sum(selection_modes) != 1:
-        raise SystemExit("Provide exactly one of --feature-ids, --top-n-features, or --all-features.")
+        raise SystemExit("Provide exactly one of --feature-ids, --feature-ids-file, --top-n-features, or --all-features.")
     config = load_config(args.config)
     output_dir = args.output_dir or Path(cfg(config, "output_dir")) / "feature_lookup"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -50,9 +58,12 @@ def main():
     checkpoint = Path(cfg(config, "sae_checkpoint"))
     root = Path(cfg(config, "output_dir"))
     feature_scores = args.feature_scores or Path(cfg(config, "feature_scores", root / "feature_scores.csv"))
+    feature_ids_arg = args.feature_ids
+    if args.feature_ids_file:
+        feature_ids_arg = _read_feature_ids_file(args.feature_ids_file)
     feature_ids = select_feature_ids(
         checkpoint,
-        args.feature_ids,
+        feature_ids_arg,
         args.top_n_features,
         feature_scores_path=feature_scores if args.top_n_features else None,
         feature_selection_metric=args.feature_selection_metric or cfg(config, "feature_selection_metric", "activation_sum"),
@@ -79,6 +90,7 @@ def main():
         feature_batch_size=args.feature_batch_size or int(cfg(config, "feature_lookup_batch_size", 256)),
         device=device,
         activation_mode=cfg(config, "activation_mode", "dense"),
+        activation_token_type=cfg(config, "activation_token_type", "auto"),
         max_chunks=args.max_chunks,
     )
 
@@ -94,6 +106,7 @@ def main():
         "splits": sorted(splits),
         "activation_source": cfg(config, "activation_source"),
         "activation_mode": cfg(config, "activation_mode", "dense"),
+        "activation_token_type": cfg(config, "activation_token_type", "auto"),
         "feature_selection_metric": args.feature_selection_metric or cfg(config, "feature_selection_metric", "activation_sum"),
         "feature_scores": str(feature_scores) if args.top_n_features else None,
     }
@@ -104,12 +117,33 @@ def main():
             row["taxonomy_source"] = tax.get("taxonomy_source", "")
             row["rep_species"] = tax.get("rep_species", "")
         events = pd.DataFrame(item["events"])
+        if events.empty:
+            events = pd.DataFrame(
+                columns=[
+                    "sample_id",
+                    "split",
+                    "token_type",
+                    "otu_id",
+                    "abundance",
+                    "processed_abundance",
+                    "abundance_rank",
+                    "activation",
+                    "project",
+                    "institution",
+                    "keywords",
+                    "nonzero_otu_count",
+                    "taxonomy",
+                    "taxonomy_source",
+                    "rep_species",
+                ]
+            )
         events_path = output_dir / f"feature_{feature_id:06d}.events.csv.gz"
         events.to_csv(events_path, index=False)
         feature_summary = {
             "feature_id": int(feature_id),
             "events_path": str(events_path),
             "activation_mode": cfg(config, "activation_mode", "dense"),
+            "activation_token_type": cfg(config, "activation_token_type", "auto"),
             "activation_source": cfg(config, "activation_source"),
             "stats": item["stats"],
         }

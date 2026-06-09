@@ -14,6 +14,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("configs/sae_interpretation/otu_xlarge_k64_aux0p03.json"))
     parser.add_argument("--feature-ids", type=str, default=None)
+    parser.add_argument("--feature-ids-file", type=Path, default=None)
     parser.add_argument("--top-n-features", type=int, default=None)
     parser.add_argument("--all-features", action="store_true", help="Build lookup/evidence/task packets for all SAE features.")
     parser.add_argument("--feature-scores", type=Path, default=None)
@@ -34,9 +35,9 @@ def _run(cmd):
 
 def main():
     args = parse_args()
-    selection_modes = [bool(args.feature_ids), bool(args.top_n_features), bool(args.all_features)]
+    selection_modes = [bool(args.feature_ids), bool(args.feature_ids_file), bool(args.top_n_features), bool(args.all_features)]
     if sum(selection_modes) != 1:
-        raise SystemExit("Provide exactly one of --feature-ids, --top-n-features, or --all-features.")
+        raise SystemExit("Provide exactly one of --feature-ids, --feature-ids-file, --top-n-features, or --all-features.")
     base = [sys.executable]
     if args.top_n_features:
         score_cmd = base + ["scripts/sae_interpretation/score_sae_features.py", "--config", str(args.config)]
@@ -60,6 +61,8 @@ def main():
     lookup_cmd = base + ["scripts/sae_interpretation/build_feature_lookup.py", "--config", str(args.config)]
     if args.feature_ids:
         lookup_cmd += ["--feature-ids", args.feature_ids]
+    if args.feature_ids_file:
+        lookup_cmd += ["--feature-ids-file", str(args.feature_ids_file)]
     if args.top_n_features:
         lookup_cmd += ["--top-n-features", str(args.top_n_features)]
     if args.all_features:
@@ -81,6 +84,8 @@ def main():
     feature_args = []
     if args.feature_ids:
         feature_args = ["--feature-ids", args.feature_ids]
+    elif args.feature_ids_file:
+        feature_args = ["--feature-ids-file", str(args.feature_ids_file)]
     elif args.top_n_features:
         selected_path = Path("outputs_sae_interpretation/otu_xlarge_k64_aux0p03/feature_lookup/selected_feature_ids.json")
         if args.config:
