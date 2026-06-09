@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
-ACTIVATIONS="${ACTIVATIONS:-data/sae/pretrain_xlarge_sample200k/mgm2_scale_xlarge_last_hidden_otu_activations.h5}"
+ACTIVATIONS="${ACTIVATIONS:-data/sae/pretrain_xlarge_sample500k/mgm2_scale_xlarge_last_hidden_otu_activations.h5}"
 TOKEN_TYPE="${TOKEN_TYPE:-otu}"
 DICT_SIZE="${DICT_SIZE:-4096}"
 TOP_K_GRID="${TOP_K_GRID:-8 16 32 64 128}"
@@ -31,7 +31,7 @@ EARLY_STOPPING_MIN_STEPS="${EARLY_STOPPING_MIN_STEPS:-20000}"
 PRELOAD_TO_MEMORY="${PRELOAD_TO_MEMORY:-1}"
 PRELOAD_DTYPE="${PRELOAD_DTYPE:-float16}"
 PRELOAD_CHUNK_ROWS="${PRELOAD_CHUNK_ROWS:-262144}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-outputs_sae/mgm2_xlarge_otu_sample200k_batchtopk_grid_d${DICT_SIZE}}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-outputs_sae/mgm2_xlarge_otu_sample500k_batchtopk_grid_d${DICT_SIZE}}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
 
 mkdir -p "${OUTPUT_ROOT}"
@@ -47,7 +47,7 @@ for top_k in ${TOP_K_GRID}; do
   fi
 
   mkdir -p "${output_dir}"
-  echo "Running sample200k OTU BatchTopK SAE: top_k=${top_k} aux_penalty=${AUX_PENALTY} output=${output_dir}"
+  echo "Running sample500k OTU BatchTopK SAE: top_k=${top_k} aux_penalty=${AUX_PENALTY} output=${output_dir}"
   (
     export ACTIVATIONS
     export TOKEN_TYPE

@@ -153,6 +153,7 @@ class FMTCommunityClassificationModel(nn.Module):
             raise ValueError("num_classes must be positive")
         self.hidden_size = int(model_config.get("hidden_size", 512))
         self.num_classes = int(num_classes)
+        _ = cross_attention_heads
         self.backbone = BaseModel(
             vocab_size=model_config.get("vocab_size", 10000),
             embedding_dim=model_config.get("embedding_dim", 1536),
@@ -167,18 +168,9 @@ class FMTCommunityClassificationModel(nn.Module):
             pad_token_id=model_config.get("pad_token_id", -1),
             cls_token_id=model_config.get("cls_token_id", -1),
         )
-        heads = int(cross_attention_heads or model_config.get("num_attention_heads", 8))
-        self.condition_layer_norm = nn.LayerNorm(self.hidden_size)
-        self.cross_attention = nn.MultiheadAttention(
-            embed_dim=self.hidden_size,
-            num_heads=heads,
-            dropout=dropout,
-            batch_first=True,
-        )
-        self.output_layer_norm = nn.LayerNorm(self.hidden_size)
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Sequential(
-            nn.Linear(self.hidden_size * 4, self.hidden_size),
+            nn.Linear(self.hidden_size * 2, self.hidden_size),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(self.hidden_size, self.num_classes),
@@ -210,7 +202,13 @@ class FMTCommunityClassificationModel(nn.Module):
         recipient_abundance_values: torch.Tensor,
         donor_abundance_values: torch.Tensor,
         attention_mask: Optional[torch.Tensor],
+        donor_input_ids: Optional[torch.Tensor] = None,
+        donor_embeddings: Optional[torch.Tensor] = None,
+        donor_attention_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
+        donor_input_ids = input_ids if donor_input_ids is None else donor_input_ids
+        donor_embeddings = embeddings if donor_embeddings is None else donor_embeddings
+        donor_attention_mask = attention_mask if donor_attention_mask is None else donor_attention_mask
         recipient_outputs = self.backbone(
             input_ids=input_ids,
             embeddings=embeddings,
@@ -218,32 +216,19 @@ class FMTCommunityClassificationModel(nn.Module):
             attention_mask=attention_mask,
         )
         donor_outputs = self.backbone(
-            input_ids=input_ids,
-            embeddings=embeddings,
+            input_ids=donor_input_ids,
+            embeddings=donor_embeddings,
             abundance_values=donor_abundance_values,
-            attention_mask=attention_mask,
+            attention_mask=donor_attention_mask,
         )
         recipient_hidden = recipient_outputs["last_hidden_state"]
         donor_hidden = donor_outputs["last_hidden_state"]
-        key_padding_mask = attention_mask == 0 if attention_mask is not None else None
-        conditioned, attention_weights = self.cross_attention(
-            query=recipient_hidden,
-            key=self.condition_layer_norm(donor_hidden),
-            value=self.condition_layer_norm(donor_hidden),
-            key_padding_mask=key_padding_mask,
-            need_weights=True,
-            average_attn_weights=False,
-        )
-        conditioned_hidden = self.output_layer_norm(recipient_hidden + self.dropout(conditioned))
         recipient_cls = recipient_hidden[:, 0, :]
         donor_cls = donor_hidden[:, 0, :]
-        conditioned_cls = conditioned_hidden[:, 0, :]
         features = torch.cat(
             [
                 recipient_cls,
                 donor_cls,
-                conditioned_cls,
-                torch.abs(recipient_cls - donor_cls),
             ],
             dim=-1,
         )
@@ -251,8 +236,6 @@ class FMTCommunityClassificationModel(nn.Module):
         return {
             "recipient_hidden_states": recipient_hidden,
             "donor_hidden_states": donor_hidden,
-            "conditioned_hidden_states": conditioned_hidden,
-            "cross_attention_weights": attention_weights,
             "logits": logits,
             "classification_logits": logits,
         }

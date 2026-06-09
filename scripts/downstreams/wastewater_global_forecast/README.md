@@ -27,6 +27,14 @@ DEVICE=cuda:7 MSE_WEIGHT=0.1 \
 DEVICE=cuda:7 MSE_WEIGHT=0.1 \
   bash scripts/downstreams/wastewater_global_forecast/run_mgm2_no_residual_scales.sh
 
+# Rerun the current best residual setup across MGM2 scales.
+DEVICE=cuda:7 SEEDS="42" \
+  bash scripts/downstreams/wastewater_global_forecast/run_mgm2_residual_scaling_rerun.sh
+
+# More stable scaling check with multiple seeds.
+DEVICE=cuda:7 SEEDS="42 43 44" \
+  bash scripts/downstreams/wastewater_global_forecast/run_mgm2_residual_scaling_rerun.sh
+
 # Summarize all available outputs.
 python scripts/downstreams/wastewater_global_forecast/summarize_global_forecast.py
 ```

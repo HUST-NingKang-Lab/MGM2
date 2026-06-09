@@ -24,6 +24,7 @@ RESPONSE_LABELS = {0: "non-responder", 1: "responder", 2: "missing"}
 
 def normalize_sample_id(value) -> str:
     text = str(value).strip()
+    text = re.sub(r"_(?:combined|R\d+|S\d+)$", "", text, flags=re.I)
     return re.sub(r"_\d+$", "", text)
 
 

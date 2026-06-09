@@ -22,10 +22,20 @@ def _parse_feature_ids(value: str | None):
     return [int(item.strip()) for item in value.split(",") if item.strip()]
 
 
+def _parse_feature_ids_file(path: Path | None):
+    if path is None:
+        return None
+    data = json.loads(Path(path).read_text())
+    if isinstance(data, dict):
+        data = data.get("feature_ids", data.get("selected_feature_ids", []))
+    return [int(feature_id) for feature_id in data]
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("configs/sae_interpretation/otu_xlarge_k64_aux0p03.json"))
     parser.add_argument("--feature-ids", type=str, default=None)
+    parser.add_argument("--feature-ids-file", type=Path, default=None)
     parser.add_argument("--evidence-dir", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
     return parser.parse_args()
@@ -39,6 +49,10 @@ def main():
     output_dir = args.output_dir or root / "codex_tasks"
     output_dir.mkdir(parents=True, exist_ok=True)
     feature_ids = _parse_feature_ids(args.feature_ids)
+    if args.feature_ids_file:
+        if feature_ids is not None:
+            raise SystemExit("Provide only one of --feature-ids or --feature-ids-file.")
+        feature_ids = _parse_feature_ids_file(args.feature_ids_file)
     if feature_ids is None:
         feature_ids = sorted(int(path.name.split("_")[1].split(".")[0]) for path in evidence_dir.glob("feature_*.evidence.json"))
     summary = []
@@ -53,4 +67,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -24,10 +24,20 @@ def _parse_feature_ids(value: str | None):
     return [int(item.strip()) for item in value.split(",") if item.strip()]
 
 
+def _parse_feature_ids_file(path: Path | None):
+    if path is None:
+        return None
+    data = json.loads(Path(path).read_text())
+    if isinstance(data, dict):
+        data = data.get("feature_ids", data.get("selected_feature_ids", []))
+    return [int(feature_id) for feature_id in data]
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("configs/sae_interpretation/otu_xlarge_k64_aux0p03.json"))
     parser.add_argument("--feature-ids", type=str, default=None)
+    parser.add_argument("--feature-ids-file", type=Path, default=None)
     parser.add_argument("--lookup-dir", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--max-examples", type=int, default=None)
@@ -49,6 +59,10 @@ def main():
     else:
         print(f"Warning: background metadata not found: {background_path}", file=sys.stderr)
     feature_ids = _parse_feature_ids(args.feature_ids)
+    if args.feature_ids_file:
+        if feature_ids is not None:
+            raise SystemExit("Provide only one of --feature-ids or --feature-ids-file.")
+        feature_ids = _parse_feature_ids_file(args.feature_ids_file)
     if feature_ids is None:
         feature_ids = sorted(int(path.name.split("_")[1].split(".")[0]) for path in lookup_dir.glob("feature_*.events.csv.gz"))
     summary = []
@@ -57,11 +71,13 @@ def main():
         summary_path = lookup_dir / f"feature_{feature_id:06d}.lookup_summary.json"
         lookup_stats = None
         lookup_activation_mode = cfg(config, "activation_mode", "dense")
+        lookup_activation_token_type = cfg(config, "activation_token_type", "auto")
         lookup_activation_source = cfg(config, "activation_source", "")
         if summary_path.exists():
             lookup_summary = json.loads(summary_path.read_text())
             lookup_stats = lookup_summary.get("stats")
             lookup_activation_mode = lookup_summary.get("activation_mode", lookup_activation_mode)
+            lookup_activation_token_type = lookup_summary.get("activation_token_type", lookup_activation_token_type)
             lookup_activation_source = lookup_summary.get("activation_source", lookup_activation_source)
         events = pd.read_csv(events_path)
         evidence = build_evidence_package(
@@ -72,6 +88,7 @@ def main():
             background=background,
         )
         evidence["global_stats"]["activation_mode"] = lookup_activation_mode
+        evidence["global_stats"]["activation_token_type"] = lookup_activation_token_type
         evidence["global_stats"]["activation_source"] = lookup_activation_source
         validate_evidence_package(evidence)
         out = output_dir / f"feature_{feature_id:06d}.evidence.json"

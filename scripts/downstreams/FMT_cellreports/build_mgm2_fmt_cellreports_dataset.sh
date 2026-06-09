@@ -64,4 +64,10 @@ echo "[$(date '+%F %T')] Preparing leave-one-cohort-out splits"
   --output_dir "${OUTPUT_DIR}/loco_splits" \
   2>&1 | tee "${OUTPUT_DIR}/loco_splits.build.log"
 
+echo "[$(date '+%F %T')] Preparing donor-similarity random splits"
+"${PYTHON_BIN}" -u scripts/downstreams/FMT_cellreports/prepare_similarity_random_splits.py \
+  --data_dir "${OUTPUT_DIR}" \
+  --output_dir "${OUTPUT_DIR}/similarity_random_splits" \
+  2>&1 | tee "${OUTPUT_DIR}/similarity_random_splits.build.log"
+
 echo "[$(date '+%F %T')] Finished Cell Reports FMT dataset build"

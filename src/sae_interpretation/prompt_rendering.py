@@ -159,9 +159,9 @@ Do not use a bare boolean for acceptance.
   },
   "negative_controls_used": ["same_taxonomy", "same_biome", "same_abundance_rank", "same_study"],
   "confidence": "high|medium|low",
-  "visualization_priority": "high|medium|low",
   "limitations": ["..."]
 }
+Do not output `visualization_priority`. Figure selection should be done later from deterministic evidence catalog metrics, not by this classification agent.
 """,
     ),
 ]

@@ -1,16 +1,23 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 
+from src.sae_interpretation.activation_alignment import infer_activation_token_type
 from src.sae_interpretation.controls import build_negative_controls
 from src.sae_interpretation.data_sources import load_allinfo_taxonomy_map
 from src.sae_interpretation.evidence import build_evidence_package
 from src.sae_interpretation.normalization import add_normalized_activation_columns
 from src.sae_interpretation.prompt_rendering import render_codex_task_files
 from src.sae_interpretation.schemas import validate_evidence_package, validate_interpretation_output_dir
-from src.sae_interpretation.sae_features import dense_feature_activations, select_feature_ids, sparse_topk_feature_activations
+from src.sae_interpretation.sae_features import (
+    dense_feature_activations,
+    select_feature_ids,
+    sparse_topk_feature_activations,
+    sparse_topk_feature_events,
+)
 from src.sae_interpretation.taxonomy import canonical_otu_id, parse_taxonomy
 from src.models.BatchTopKSAE import BatchTopKSAE
 
@@ -73,6 +80,16 @@ def test_taxonomy_helpers_parse_canonical_ids_and_ranks():
     assert parsed["kingdom"] == "Bacteria"
     assert parsed["phylum"] == "Firmicutes"
     assert parsed["genus"] == "Genus"
+    assert parse_taxonomy(float("nan"))["kingdom"] == "unknown"
+
+
+def test_activation_token_type_infers_from_sidecar(tmp_path):
+    path = tmp_path / "acts.h5"
+    path.write_bytes(b"")
+    assert infer_activation_token_type(path) == "all"
+    Path(str(path) + ".json").write_text(json.dumps({"token_type": "otu"}))
+    assert infer_activation_token_type(path) == "otu"
+    assert infer_activation_token_type(path, "all") == "all"
 
 
 def test_allinfo_taxonomy_loader_prefers_gtdb_taxonomy(tmp_path):
@@ -115,8 +132,51 @@ def test_evidence_package_validates_and_renders_codex_tasks(tmp_path):
     assert initial.exists()
     assert "evidence_anchors" in initial.read_text()
     assert "Do not create template JSON" in initial.read_text()
+    classification_prompt = out_dir / "feature_000007" / "06_classification.md"
+    classification_text = classification_prompt.read_text()
+    assert '"visualization_priority"' not in classification_text
+    assert "Do not output `visualization_priority`" in classification_text
     assert schema.exists()
     json.loads(schema.read_text())
+
+
+def test_taxonomy_signal_prefers_specific_rank_over_kingdom():
+    events = pd.DataFrame(
+        [
+            {
+                "sample_id": f"s{i}",
+                "otu_id": f"99_{i}",
+                "activation": 10.0 - i,
+                "abundance": 0.1,
+                "abundance_rank": i + 1,
+                "split": "train",
+                "primary_env": "soil",
+                "project": "p1",
+                "taxonomy": "Bacteria;Firmicutes_A;Clostridia;Lachnospirales;Lachnospiraceae;unknown",
+            }
+            for i in range(60)
+        ]
+        + [
+            {
+                "sample_id": f"x{i}",
+                "otu_id": f"99_x{i}",
+                "activation": 1.0,
+                "abundance": 0.1,
+                "abundance_rank": i + 100,
+                "split": "train",
+                "primary_env": "soil",
+                "project": "p1",
+                "taxonomy": "Bacteria;Proteobacteria;Gammaproteobacteria",
+            }
+            for i in range(40)
+        ]
+    )
+
+    evidence = build_evidence_package(feature_id=8, events=events, max_examples=100)
+    signal = evidence["diagnostics"]["taxonomy_signal"]
+
+    assert signal["best_rank"] == "family"
+    assert signal["best_value"] == "Lachnospiraceae"
 
 
 def test_top_n_feature_selection_uses_scores_not_recent_firing_ties(tmp_path):
@@ -186,9 +246,12 @@ def test_sparse_topk_feature_activations_apply_batchtopk_gate():
 
     dense = dense_feature_activations(model, x, [0, 1, 2, 3])
     sparse = sparse_topk_feature_activations(model, x, [0, 1, 2, 3])
+    rows, cols, values = sparse_topk_feature_events(model, x, device="cpu")
 
     assert (dense > 0).sum() > (sparse > 0).sum()
     assert int((sparse > 0).sum()) == model.top_k * len(x)
+    assert len(values) == model.top_k * len(x)
+    assert sorted(zip(rows.tolist(), cols.tolist())) == sorted(zip(*np.nonzero(sparse)))
 
 
 def test_interpretation_output_validation_requires_all_agent_stages(tmp_path):
@@ -243,7 +306,7 @@ def test_strict_quality_validation_flags_shallow_complete_outputs(tmp_path):
         "group_validation.json": {"feature_id": 1, "validation_results": [{"group_id": "A"}, {"group_id": "B"}]},
         "unified_description.json": shallow_unified,
         "final_validation.json": {"feature_id": 1, "accepted": True},
-        "classification.json": {"feature_id": 1, "primary_class": "Unclear"},
+        "classification.json": {"feature_id": 1, "primary_class": "Unclear", "visualization_priority": "high"},
     }
     for name, payload in files.items():
         (feature_dir / name).write_text(json.dumps(payload))
@@ -255,3 +318,4 @@ def test_strict_quality_validation_flags_shallow_complete_outputs(tmp_path):
     assert basic["quality_pass"] is False
     assert strict["valid"] is False
     assert strict["quality_warnings"]
+    assert any("visualization_priority" in item["warning"] for item in strict["quality_warnings"])

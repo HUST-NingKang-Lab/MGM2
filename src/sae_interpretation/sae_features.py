@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -94,6 +94,28 @@ def sparse_topk_feature_activations(model: BatchTopKSAE, x: np.ndarray, feature_
     all_sparse = model.encode(processed, update_inactive=False)
     ids = torch.as_tensor(feature_ids, dtype=torch.long, device=all_sparse.device)
     return all_sparse[:, ids].detach().cpu().numpy()
+
+
+@torch.no_grad()
+def sparse_topk_feature_events(model: BatchTopKSAE, x: np.ndarray, device: str = "cpu") -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return row indices, feature ids, and values for BatchTopK-gated events."""
+
+    tensor = torch.as_tensor(x, dtype=torch.float32, device=torch.device(device))
+    processed, _ = model.preprocess(tensor)
+    dense_acts = torch.relu((processed - model.b_dec) @ model.W_enc)
+    flat = dense_acts.flatten()
+    total_k = min(max(1, int(model.top_k) * dense_acts.shape[0]), flat.numel())
+    top_values, top_indices = flat.topk(total_k, sorted=False)
+    keep = top_values > 0
+    top_values = top_values[keep]
+    top_indices = top_indices[keep]
+    rows = torch.div(top_indices, model.dict_size, rounding_mode="floor")
+    cols = top_indices.remainder(model.dict_size)
+    return (
+        rows.detach().cpu().numpy().astype(np.int64, copy=False),
+        cols.detach().cpu().numpy().astype(np.int64, copy=False),
+        top_values.detach().cpu().numpy().astype(np.float32, copy=False),
+    )
 
 
 def feature_activations(

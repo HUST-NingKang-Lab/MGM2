@@ -22,7 +22,10 @@ def clean_taxon(value) -> str:
     text = "" if value is None else str(value).strip()
     if "__" in text and len(text) > 3:
         text = text.split("__", 1)[1]
-    return text.strip() or "unknown"
+    text = text.strip()
+    if not text or text.lower() in {"nan", "none", "null", "na", "n/a"}:
+        return "unknown"
+    return text
 
 
 def taxonomy_specificity(taxonomy) -> int:

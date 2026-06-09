@@ -191,6 +191,8 @@ def _quality_warnings_for_outputs(feature_dir: Path) -> list[Dict[str, str]]:
 
     classification = loaded.get("classification.json", {})
     if classification:
+        if "visualization_priority" in classification:
+            warn("classification.json", "remove visualization_priority; choose figures later from deterministic evidence catalog metrics")
         rejected = classification.get("rejected_classes")
         if isinstance(rejected, dict):
             rejected_count = len(rejected)

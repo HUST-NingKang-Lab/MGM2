@@ -57,6 +57,9 @@ def _row(path: Path) -> dict:
     primary_env, primary_env_fraction = _top_value(evidence, "enrichment.metadata.primary_env")
     return {
         "feature_id": int(evidence["feature_id"]),
+        "activation_mode": str(global_stats.get("activation_mode", "")),
+        "activation_source": str(global_stats.get("activation_source", "")),
+        "activation_token_type": str(global_stats.get("activation_token_type", "")),
         "activation_sum": float(global_stats.get("activation_sum", 0.0)),
         "activation_mean": float(global_stats.get("activation_mean", 0.0)),
         "activation_max": float(global_stats.get("activation_max", 0.0)),

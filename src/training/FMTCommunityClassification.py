@@ -38,6 +38,7 @@ def parse_args():
     data_dir = Path("data/downstreams/FMT")
     parser.add_argument("--train_data_file", type=Path, default=data_dir / "community_train.pkl")
     parser.add_argument("--train_metadata_file", type=Path, default=data_dir / "response_train_meta_split.csv")
+    parser.add_argument("--val_metadata_file", type=Path, default=None)
     parser.add_argument("--test_data_file", type=Path, default=data_dir / "community_test.pkl")
     parser.add_argument("--test_metadata_file", type=Path, default=data_dir / "response_test_meta_split.csv")
     parser.add_argument("--ntv3_embedding_path", type=Path, default=data_dir / "community_train.resolved_embeddings.h5")
@@ -47,6 +48,8 @@ def parse_args():
     parser.add_argument("--output_dir", type=Path, default=Path("outputs_downstreams/FMT/community_classification"))
     parser.add_argument("--experiment_name", type=str, default="fmt_community_classification")
     parser.add_argument("--prediction_file", type=Path, default=None)
+    parser.add_argument("--class_names", nargs="+", default=None)
+    parser.add_argument("--sequence_mode", choices=["sparse", "dense"], default="sparse")
     parser.add_argument("--fold_index", type=int, default=0)
     parser.add_argument("--num_folds", type=int, default=5)
     parser.add_argument("--val_group_column", type=str, default="fmt_id")
@@ -309,6 +312,8 @@ def main():
         output_min=config.abundance.output_min,
         output_max=config.abundance.output_max,
         normalize=config.abundance.normalize,
+        class_names=args.class_names,
+        sequence_mode=args.sequence_mode,
     )
     class_names = train_dataset.class_names
     if args.outer_cv:
@@ -334,6 +339,35 @@ def main():
         print(
             f"FMT response events: {len(train_dataset)} | outer fold {args.fold_index + 1}/{args.num_folds} "
             f"train={len(train_idx)} val={len(val_idx)} test={len(test_idx)}"
+        )
+    elif args.val_metadata_file is not None:
+        if not args.val_metadata_file.exists():
+            raise FileNotFoundError(args.val_metadata_file)
+        val_dataset = FMTCommunityClassificationDataset(
+            community_data_file=args.train_data_file,
+            metadata_file=args.val_metadata_file,
+            ntv3_embedding_path=args.ntv3_embedding_path,
+            min_abundance=config.abundance.min_abundance,
+            output_min=config.abundance.output_min,
+            output_max=config.abundance.output_max,
+            normalize=config.abundance.normalize,
+            class_names=class_names,
+            sequence_mode=args.sequence_mode,
+        )
+        train_idx = np.arange(len(train_dataset))
+        val_idx = np.arange(len(val_dataset))
+        test_idx = None
+        train_loader = create_subset_loader(train_dataset, train_idx, args, shuffle=True)
+        val_loader = create_fmt_community_classification_test_loader(
+            test_dataset=val_dataset,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_memory,
+            prefetch_factor=args.prefetch_factor,
+        )
+        print(
+            f"FMT response events: train={len(train_idx)} val={len(val_idx)} "
+            f"from explicit validation metadata"
         )
     else:
         train_loader, val_loader, train_idx, val_idx = create_fmt_community_classification_dataloaders(
@@ -375,6 +409,7 @@ def main():
             output_max=config.abundance.output_max,
             normalize=config.abundance.normalize,
             class_names=class_names,
+            sequence_mode=args.sequence_mode,
         )
         test_loader = create_fmt_community_classification_test_loader(
             test_dataset=test_dataset,
