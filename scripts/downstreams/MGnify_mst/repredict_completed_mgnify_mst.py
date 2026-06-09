@@ -38,14 +38,14 @@ from src.training.CommunityClassificationModule import CommunityClassificationMo
 #     ("scale_large", "env_level_2"),
 # ]
 DEFAULT_RUNS = [
-    ("scale_small", "env_level_2"),
-    ("scale_small", "env_level_3"),
-    ("scale_small", "env_level_4"),
-    ("scale_small", "env_level_5"),
-    ("scale_medium", "env_level_2"),
-    ("scale_medium", "env_level_3"),
-    ("scale_medium", "env_level_4"),
-    ("scale_medium", "env_level_5"),
+    ("scale_large", "env_level_3"),
+    ("scale_large", "env_level_4"),
+    ("scale_large", "env_level_5"),
+    ("scale_xlarge", "env_level_1"),
+    ("scale_xlarge", "env_level_2"),
+    ("scale_xlarge", "env_level_3"),
+    ("scale_xlarge", "env_level_4"),
+    ("scale_xlarge", "env_level_5"),
 ]
 DEFAULT_SEEDS = [11, 22, 33, 44, 55]
 
