@@ -1,10 +1,15 @@
 import importlib.util
+import sys
 from types import SimpleNamespace
 import unittest
 from pathlib import Path
+import tempfile
+import pickle
 
 import numpy as np
 import pandas as pd
+import h5py
+import torch
 
 
 def _load_cellreports_utils():
@@ -12,6 +17,16 @@ def _load_cellreports_utils():
     script_path = repo_root / "scripts" / "downstreams" / "FMT_cellreports" / "cellreports_utils.py"
     spec = importlib.util.spec_from_file_location("fmt_cellreports_utils", script_path)
     module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_cellreports_mozaic_module():
+    repo_root = Path(__file__).resolve().parents[1]
+    script_path = repo_root / "scripts" / "downstreams" / "FMT_cellreports" / "train_mozaic_similarity_random.py"
+    spec = importlib.util.spec_from_file_location("train_mozaic_similarity_random", script_path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -138,6 +153,50 @@ class FMTCellReportsTests(unittest.TestCase):
         self.assertEqual(len(set(train_idx).intersection(val_idx)), 0)
         self.assertEqual(len(set(train_idx).intersection(test_idx)), 0)
         self.assertEqual(len(set(val_idx).intersection(test_idx)), 0)
+
+    def test_mozaic_model_accepts_donor_recipient_vectors(self):
+        module = _load_cellreports_mozaic_module()
+
+        model = module.MOZAICDenseNet1D(num_features=16, num_classes=2, nb_layers=2, growth_rate=4, nb_filter=4)
+        logits = model(torch.rand(3, 16), torch.rand(3, 16))
+        loss = module.mozaic_binary_cross_entropy(logits, torch.tensor([0, 1, 0]))
+        l2_penalty = module.mozaic_l2_regularization(model)
+
+        self.assertEqual(tuple(logits.shape), (3, 2))
+        self.assertTrue(torch.isfinite(loss))
+        self.assertGreater(float(l2_penalty), 0.0)
+
+    def test_mozaic_arrays_follow_split_metadata(self):
+        module = _load_cellreports_mozaic_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with h5py.File(root / "resolved.h5", "w") as handle:
+                handle.create_dataset("embeddings", data=np.ones((3, 4), dtype=np.float32))
+                handle.create_dataset("otu_ids", data=np.array([b"otu_a", b"otu_b", b"otu_c"]))
+            payload = {
+                "samples": ["donor_1", "recipient_1", "donor_2", "recipient_2"],
+                "otu_data": {
+                    "donor_1": {"input_ids": np.array([-1, 0]), "attention_mask": np.array([1, 1]), "abundance_values": np.array([0.0, 1.0], dtype=np.float32)},
+                    "recipient_1": {"input_ids": np.array([-1, 1]), "attention_mask": np.array([1, 1]), "abundance_values": np.array([0.0, 1.0], dtype=np.float32)},
+                    "donor_2": {"input_ids": np.array([-1, 2]), "attention_mask": np.array([1, 1]), "abundance_values": np.array([0.0, 1.0], dtype=np.float32)},
+                    "recipient_2": {"input_ids": np.array([-1, 0]), "attention_mask": np.array([1, 1]), "abundance_values": np.array([0.0, 1.0], dtype=np.float32)},
+                },
+            }
+            with (root / "community.pkl").open("wb") as handle:
+                pickle.dump(payload, handle)
+            meta = pd.DataFrame(
+                [
+                    {"TargetID": "fmt_1", "fmt_id": "fmt_1", "donor_sample_id": "donor_1", "recipient_sample_id": "recipient_1", "response_label": "similarity_increased"},
+                    {"TargetID": "fmt_2", "fmt_id": "fmt_2", "donor_sample_id": "donor_2", "recipient_sample_id": "recipient_2", "response_label": "similarity_decreased"},
+                ]
+            )
+            meta.to_csv(root / "train_meta.csv", index=False)
+
+            arrays = module.build_arrays(root / "community.pkl", root / "train_meta.csv", root / "resolved.h5", module.CLASS_NAMES)
+
+            self.assertEqual(arrays.donor.shape, (2, 3))
+            self.assertEqual(arrays.recipient.shape, (2, 3))
+            self.assertEqual(arrays.labels.tolist(), [0, 1])
 
 
 if __name__ == "__main__":
