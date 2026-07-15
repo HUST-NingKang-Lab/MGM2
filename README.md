@@ -1,78 +1,119 @@
-# MGM2: A Foundation Model for Microbial Communities
+<div align="center">
 
-MGM2 encodes a microbial community into contextualized microbial-token representations and a single community-level embedding. It combines sequence-derived NTv3 representations of microbial identity with relative-abundance signals in an abundance-aware Transformer.
+# MGM2 as a Unified Foundation Model for Microbiome World Exploration
 
-![MGM2 model overview](pipeline.png)
+MGM2 converts taxonomic composition and relative abundance into contextualized
+microbial representations and one fixed-size community embedding.
+
+<p>
+  <a href="https://huggingface.co/LudensZhang/MGM2">
+    <img alt="MGM2 on Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-MGM2-FFD21E?logo=huggingface&logoColor=000">
+  </a>
+  <a href="https://huggingface.co/InstaDeepAI/NTv3_650M_pre">
+    <img alt="NTv3 on Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-NTv3-4C6EF5?logo=huggingface&logoColor=fff">
+  </a>
+  <img alt="Python 3.10" src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=fff">
+  <img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-Lightning-EE4C2C?logo=pytorch&logoColor=fff">
+</p>
+
+<p>
+  <a href="#model">Model</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#two-input-routes">Input Routes</a> ·
+  <a href="#extract-community-embeddings">Embedding Export</a>
+</p>
+
+</div>
+
+<p align="center">
+  <img src="pipeline.png" alt="MGM2 model pipeline" width="920">
+</p>
+
+---
 
 ## Model
 
-Each nonzero microbial feature is represented by:
+MGM2 represents every nonzero microbial feature with two complementary signals:
 
-- a 1,536-dimensional NTv3 embedding describing microbial identity;
-- its relative abundance in the community; and
-- contextual information learned from the other members of the same community.
+| Signal | Role |
+| --- | --- |
+| **Microbial identity** | A 1,536-dimensional NTv3 representation derived from an OTU/ASV sequence or a taxonomy fallback prototype |
+| **Community abundance** | The feature's relative abundance within the sample |
 
-A learnable `[CLS]` token aggregates the complete community into one fixed-size vector. MGM2 is trained with masked abundance-bin classification and masked log-abundance regression. Only abundance values are masked; microbial identity remains visible so that the model learns community context and abundance structure.
+An abundance-aware Transformer contextualizes each microbial token against the
+rest of the community. A learnable `[CLS]` token summarizes the complete sample
+as one vector that can be used directly in downstream models.
 
-The exported community representations are:
+MGM2 supports three community representations:
 
-- `cls`: the `[CLS]` hidden state. This is the recommended general-purpose MGM2 embedding.
-- `mean_pool`: the attention-mask-aware mean of contextualized microbial tokens, excluding `[CLS]`.
-- `qwen3_proj`: the projected `[CLS]` representation from models released with a Qwen3 alignment head.
+| Representation | Description | Recommended use |
+| --- | --- | --- |
+| `cls` | Final hidden state of the community `[CLS]` token | **Default general-purpose embedding** |
+| `mean_pool` | Attention-mask-aware mean of contextualized microbial tokens | Token-balanced community summary |
+| `qwen3_proj` | `[CLS]` projected through the alignment head | Models that use the aligned representation |
 
-## Model Sizes
+### Model family
 
-All MGM2 sizes share the same input representation and output interface.
+All scales use the same input and inference interface.
 
-| Model | Hidden size | Transformer layers | Attention heads | Feed-forward size |
+| Model | Hidden size | Layers | Heads | Feed-forward size |
 | --- | ---: | ---: | ---: | ---: |
-| MGM2-small | 224 | 6 | 4 | 896 |
-| MGM2-medium | 320 | 6 | 5 | 1,280 |
-| MGM2-large | 384 | 8 | 6 | 1,536 |
-| MGM2-xlarge | 512 | 10 | 8 | 2,048 |
+| **MGM2-small** | 224 | 6 | 4 | 896 |
+| **MGM2-medium** | 320 | 6 | 5 | 1,280 |
+| **MGM2-large** | 384 | 8 | 6 | 1,536 |
+| **MGM2-xlarge** | 512 | 10 | 8 | 2,048 |
 
-The dimension of a `cls` or `mean_pool` embedding is the hidden size of the selected model.
+> The exported `cls` and `mean_pool` dimensions equal the hidden size of the
+> selected model.
 
-## Installation
+## Quick Start
 
-MGM2 requires Python, PyTorch, PyTorch Lightning, NumPy, pandas, SciPy, h5py, tqdm, Transformers, and Biopython. A minimal environment can be created with:
+### 1. Install MGM2
 
 ```bash
+git clone https://github.com/HUST-NingKang-Lab/MGM2.git
+cd MGM2
+
 conda create -n mgm2 python=3.10
 conda activate mgm2
 pip install torch pytorch-lightning numpy pandas scipy h5py tqdm transformers biopython huggingface_hub
 ```
 
-Run the commands below from the repository root so that the local `src` package is importable.
+### 2. Download the MGM2 release
 
-## Download a Model
-
-MGM2 weights and their matching model resources will be published on Hugging Face. Replace the placeholder with the repository ID from the selected model card:
+The complete release is available at
+[LudensZhang/MGM2](https://huggingface.co/LudensZhang/MGM2).
 
 ```python
 from huggingface_hub import snapshot_download
 
 snapshot_download(
-    repo_id="<HUGGINGFACE_REPO_ID>",
-    local_dir="models/MGM2-small",
+    repo_id="LudensZhang/MGM2",
+    local_dir="MGM2-release",
 )
 ```
 
-The commands below assume this model bundle layout:
+The downloaded directory contains all four model scales and shared embedding
+resources:
 
 ```text
-models/MGM2-small/
-├── config.json
-├── model.ckpt
-├── reference_ntv3_embeddings.h5
-└── taxonomy_fallback.h5
+MGM2-release/
+├── models/
+│   ├── small/       # config.json + model.ckpt
+│   ├── medium/
+│   ├── large/
+│   └── xlarge/
+└── embeddings/
+    ├── reference_ntv3_embeddings.h5
+    └── taxonomy_fallback.h5
 ```
 
-`last.ckpt` and `checkpoints/last.ckpt` are also recognized automatically in place of `model.ckpt`.
+### 3. Prepare a community table
 
-## Community Input
-
-MGM2 accepts a feature-by-sample CSV or TSV table. The first column contains feature identifiers; each remaining column is one community. Values may be counts or abundances because the input builder converts each sample to relative abundance.
+MGM2 accepts a feature-by-sample CSV or TSV table. The first column contains
+feature identifiers, and each remaining column is one microbial community.
+Values may be counts or abundances; each sample is converted to relative
+abundance during input preparation.
 
 ```csv
 feature_id,sample_A,sample_B
@@ -81,11 +122,32 @@ OTU_002,35,82
 OTU_003,0,17
 ```
 
-There are two supported ways to assign microbial identity embeddings.
+## Two Input Routes
 
-## Option A: OTU or ASV Sequences
+Choose the route that matches the information available for your microbial
+features.
 
-Use this route when representative nucleotide sequences are available. Every FASTA record ID must exactly match the corresponding row identifier in the community table.
+| | **Sequence-aware** | **Taxonomy fallback** |
+| --- | --- | --- |
+| Input identity | OTU/ASV nucleotide sequence | Species name or taxonomy path |
+| Identity encoder | [NTv3-650M](https://huggingface.co/InstaDeepAI/NTv3_650M_pre) | MGM2 taxonomy fallback |
+| Best choice when | Representative sequences are available | Only taxonomic labels are available |
+| Output | Feature-level identity HDF5 | Resolved taxonomy embedding HDF5 |
+
+### Route A: OTU or ASV sequences
+
+Download [InstaDeepAI/NTv3_650M_pre](https://huggingface.co/InstaDeepAI/NTv3_650M_pre):
+
+```python
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id="InstaDeepAI/NTv3_650M_pre",
+    local_dir="NTv3_650M_pre",
+)
+```
+
+FASTA record IDs must exactly match the feature IDs in the abundance table.
 
 ```fasta
 >OTU_001
@@ -94,19 +156,15 @@ ACGT...
 TGCA...
 ```
 
-First encode the sequences with NTv3:
+Encode the sequences and organize the MGM2 input:
 
 ```bash
 python ntv3_embedding.py \
   --fasta_path communities.fasta \
-  --model_path /path/to/NTv3_650M_pre \
+  --model_path NTv3_650M_pre \
   --output_path community_ntv3_embeddings.h5 \
   --gpu_ids 0
-```
 
-Then organize the abundance table as MGM2 input:
-
-```bash
 python src/data/build_dataset.py \
   --otu_table community_table.csv \
   --format csv \
@@ -115,11 +173,10 @@ python src/data/build_dataset.py \
   --output community_input.pkl
 ```
 
-`--top_k_otus 768` keeps the 768 most abundant nonzero features in each community. Use `--top_k_otus 0` to keep all nonzero features.
+### Route B: Species names
 
-## Option B: Species Names
-
-Use this route when representative sequences are unavailable and the table contains taxonomic names. Bare or rank-prefixed species names are accepted:
+Use the release fallback when representative sequences are unavailable. Feature
+IDs may be bare species names, rank-prefixed names, or full taxonomy paths:
 
 ```csv
 feature_id,sample_A,sample_B
@@ -128,34 +185,31 @@ s__Faecalibacterium prausnitzii,0.09,0.17
 g__Bifidobacterium,0.03,0.11
 ```
 
-Resolve those names with the taxonomy fallback resource distributed with the selected MGM2 model:
-
 ```bash
 python src/data/build_dataset.py \
   --otu_table community_species.csv \
   --format csv \
-  --ntv3_embedding models/MGM2-small/reference_ntv3_embeddings.h5 \
-  --fallback_embedding models/MGM2-small/taxonomy_fallback.h5 \
+  --ntv3_embedding MGM2-release/embeddings/reference_ntv3_embeddings.h5 \
+  --fallback_embedding MGM2-release/embeddings/taxonomy_fallback.h5 \
   --resolved_embedding community_resolved_embeddings.h5 \
   --top_k_otus 768 \
   --output community_input.pkl
 ```
 
-Name-only matching is rank aware and accepts only an unambiguous name within a taxonomic rank. A full rank-prefixed path is preferable when available:
+Name-only matching is rank aware and accepts only unambiguous names within a
+taxonomic rank. A full rank-prefixed path is preferable when available.
 
-```text
-d__Bacteria;p__Bacteroidota;c__Bacteroidia;o__Bacteroidales;f__Bacteroidaceae;g__Bacteroides;s__Bacteroides fragilis
-```
-
-`community_resolved_embeddings.h5` records `embedding_source` and `matched_taxon_key` for every resolved feature. Exact NTv3 identifiers are marked `ntv3`; name matches are marked, for example, `fallback:species_name`. The global fallback is used only when no exact identifier, taxonomy path, or unambiguous taxon name can be resolved.
+> `community_resolved_embeddings.h5` records `embedding_source` and
+> `matched_taxon_key` for every feature. The global fallback is used only when
+> no exact ID, taxonomy path, or unambiguous taxon name can be resolved.
 
 ## Extract Community Embeddings
 
-Both input routes produce the same `community_input.pkl` interface. Extract unlabeled MGM2 embeddings with:
+Both input routes produce the same `community_input.pkl` interface.
 
 ```bash
 python scripts/extract_community_embeddings.py \
-  --model_dir models/MGM2-small \
+  --model_dir MGM2-release/models/small \
   --data_file community_input.pkl \
   --output community_embeddings.h5 \
   --embedding_strategy cls \
@@ -163,31 +217,19 @@ python scripts/extract_community_embeddings.py \
   --device cuda:0
 ```
 
-The embedding resource path stored in `community_input.pkl` is used automatically. Pass `--ntv3_embedding_path` only when that resource has moved.
+Change `models/small` to `models/medium`, `models/large`, or
+`models/xlarge` to select another scale. The embedding resource path stored in
+`community_input.pkl` is used automatically.
 
-To use an explicit checkpoint instead of a model directory:
+### Output formats
 
-```bash
-python scripts/extract_community_embeddings.py \
-  --checkpoint /path/to/model.ckpt \
-  --config /path/to/config.json \
-  --data_file community_input.pkl \
-  --output community_embeddings.npz \
-  --embedding_strategy mean_pool \
-  --device cuda:0
-```
+The format is selected by the output filename extension.
 
-The output format is selected by extension:
-
-| Extension | Contents |
+| Extension | Saved content |
 | --- | --- |
-| `.h5` or `.hdf5` | `embeddings`, `sample_ids`, and model provenance attributes |
-| `.npz` | compressed `embeddings`, `sample_ids`, and provenance arrays |
-| `.csv` | one row per sample with `sample_id` and embedding columns |
-
-For HDF5 output, `embeddings` has shape `[number_of_samples, hidden_size]` and follows the order in `sample_ids`.
-
-## Load the Result
+| `.h5` / `.hdf5` | `embeddings`, `sample_ids`, and model provenance |
+| `.npz` | Compressed embeddings, sample IDs, and provenance arrays |
+| `.csv` | One sample per row with explicit embedding columns |
 
 ```python
 import h5py
@@ -200,6 +242,6 @@ print(sample_ids.shape)
 print(embeddings.shape)
 ```
 
-## Citation
-
-If you use MGM2 in your research, please cite the accompanying paper. Complete citation metadata will be added with the model release.
+For HDF5 output, `embeddings` has shape
+`[number_of_samples, model_hidden_size]` and follows the order in
+`sample_ids`.
