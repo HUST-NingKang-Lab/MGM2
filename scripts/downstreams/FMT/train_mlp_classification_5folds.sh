@@ -8,6 +8,7 @@ DEVICE="${DEVICE:-auto}"
 SEEDS=(${SEEDS:-0})
 FOLDS=(${FOLDS:-0 1 2 3 4})
 NUM_FOLDS="${NUM_FOLDS:-5}"
+LABEL_COLUMN="${LABEL_COLUMN:-indication}"
 
 DATA_FILE="${DATA_FILE:-${DATA_DIR}/community_all.pkl}"
 METADATA_FILE="${METADATA_FILE:-${DATA_DIR}/response_all_meta.csv}"
@@ -31,6 +32,7 @@ for seed in "${SEEDS[@]}"; do
       --output_dir "${out_dir}" \
       --fold_index "${fold}" \
       --num_folds "${NUM_FOLDS}" \
+      --label_column "${LABEL_COLUMN}" \
       --seed "${seed}" \
       --device "${DEVICE}"
   done

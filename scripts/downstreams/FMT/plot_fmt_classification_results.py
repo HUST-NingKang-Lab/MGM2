@@ -25,15 +25,16 @@ mpl.rcParams["ps.fonttype"] = 42
 
 SCALE_ORDER = ["scale_small", "scale_medium", "scale_large", "scale_xlarge"]
 SCALE_LABELS = {
-    "scale_small": "MGM2-Small",
-    "scale_medium": "MGM2-Medium",
-    "scale_large": "MGM2-Large",
-    "scale_xlarge": "MGM2-XLarge",
+    "scale_small": "MGM2-small",
+    "scale_medium": "MGM2-medium",
+    "scale_large": "MGM2-large",
+    "scale_xlarge": "MGM2-xlarge",
 }
-METHOD_ORDER = ["Majority", "MLP", "MGM2-small", "MGM2-medium", "MGM2-large", "MGM2-xlarge"]
+METHOD_ORDER = ["Majority", "MOZAIC-repro", "MLP", "MGM2-small", "MGM2-medium", "MGM2-large", "MGM2-xlarge"]
 COLORS = {
     "Majority": "#777777",
-    "MLP": "#2A9D8F",
+    "MOZAIC-repro": "#2A9D8F",
+    "MLP": "#E76F51",
     "MGM2-small": "#7CB5EC",
     "MGM2-medium": "#4363D8",
     "MGM2-large": "#1A237E",
@@ -208,6 +209,22 @@ def load_mlp_fold_metrics(root: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def load_mozaic_fold_metrics(root: Path) -> pd.DataFrame:
+    rows = []
+    for path in sorted(root.glob("seed_*/fold_*/metrics.json")):
+        metrics = read_metrics_json(path)
+        row = {
+            "method": "MOZAIC-repro",
+            "scale": "mozaic_repro",
+            "seed": parse_seed(path),
+            "fold": parse_fold(path),
+            "source": str(path),
+        }
+        row.update(metrics)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def load_predictions(root: Path, method: str, scale: str) -> pd.DataFrame:
     frames = []
     for path in sorted(root.glob("seed_*/fold_*/test_predictions.csv")):
@@ -231,8 +248,12 @@ def load_mgm2_predictions(root: Path) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-def load_all_predictions(mgm2_root: Path, mlp_root: Path) -> pd.DataFrame:
-    frames = [load_predictions(mlp_root, "MLP", "mlp"), load_mgm2_predictions(mgm2_root)]
+def load_all_predictions(mgm2_root: Path, mlp_root: Path, mozaic_root: Path) -> pd.DataFrame:
+    frames = [
+        load_predictions(mozaic_root, "MOZAIC-repro", "mozaic_repro"),
+        load_predictions(mlp_root, "MLP", "mlp"),
+        load_mgm2_predictions(mgm2_root),
+    ]
     frames = [frame for frame in frames if not frame.empty]
     if not frames:
         raise FileNotFoundError("No FMT classification prediction CSV files were found")
@@ -344,10 +365,19 @@ def save_metric_bars(fold_summary: pd.DataFrame, ensemble_summary: pd.DataFrame,
         ax.bar(x, values, yerr=std, capsize=4, color=[COLORS[label] for label in labels], edgecolor="#333333", linewidth=1.0, width=0.58)
         ensemble_lookup = dict(zip(ensemble_summary["method"], ensemble_summary[metric]))
         for idx, label in enumerate(labels):
+            if np.isfinite(values[idx]):
+                ax.text(
+                    idx,
+                    values[idx] + std[idx] + 0.008,
+                    f"{values[idx]:.3f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8.5,
+                    fontweight="bold",
+                )
             ens_value = ensemble_lookup.get(label, np.nan)
             if np.isfinite(ens_value):
                 ax.scatter(idx, ens_value, color="white", edgecolor="#111111", linewidth=1.0, s=42, zorder=4)
-                ax.text(idx, max(values[idx], ens_value), f"{ens_value:.3f}", ha="center", va="bottom", fontsize=8.5, fontweight="bold")
         ax.set_xticks(x)
         ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=9.5, fontweight="bold")
         ax.set_ylabel(METRIC_LABELS[metric], fontsize=11)
@@ -497,6 +527,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--mgm2_dir", type=Path, default=Path("outputs_downstreams/FMT/community_classification"))
     parser.add_argument("--mlp_dir", type=Path, default=Path("outputs_downstreams/FMT/mlp_classification_baseline"))
+    parser.add_argument("--mozaic_dir", type=Path, default=Path("outputs_downstreams/FMT/mozaic_classification_baseline"))
     parser.add_argument("--output_dir", type=Path, default=Path("figures/FMT"))
     return parser.parse_args()
 
@@ -508,12 +539,13 @@ def main() -> None:
     fold_metrics = pd.concat(
         [
             load_mlp_fold_metrics(args.mlp_dir),
+            load_mozaic_fold_metrics(args.mozaic_dir),
             load_mgm2_fold_metrics(args.mgm2_dir),
         ],
         ignore_index=True,
         sort=False,
     )
-    predictions = load_all_predictions(args.mgm2_dir, args.mlp_dir)
+    predictions = load_all_predictions(args.mgm2_dir, args.mlp_dir, args.mozaic_dir)
     ensemble_predictions = build_ensemble_predictions(predictions)
     fold_metrics, ensemble_predictions = add_majority_rows(fold_metrics, ensemble_predictions)
     fold_summary = summarize_fold_metrics(fold_metrics)

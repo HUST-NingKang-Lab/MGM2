@@ -24,6 +24,7 @@ STAGE2_SCALES=(${STAGE2_SCALES:-scale_small scale_medium scale_large scale_xlarg
 SEEDS=(${SEEDS:-0})
 FOLDS=(${FOLDS:-0 1 2 3 4})
 NUM_FOLDS="${NUM_FOLDS:-5}"
+FOLD_LABEL_COLUMN="${FOLD_LABEL_COLUMN:-indication}"
 
 MAX_EPOCHS="${MAX_EPOCHS:-100}"
 BATCH_SIZE="${BATCH_SIZE:-32}"
@@ -73,6 +74,7 @@ for model_scale in "${STAGE2_SCALES[@]}"; do
                 --config "${config_path}" \
                 --fold_index "${fold}" \
                 --num_folds "${NUM_FOLDS}" \
+                --fold_label_column "${FOLD_LABEL_COLUMN}" \
                 --outer_cv \
                 --max_epochs "${MAX_EPOCHS}" \
                 --batch_size "${BATCH_SIZE}" \

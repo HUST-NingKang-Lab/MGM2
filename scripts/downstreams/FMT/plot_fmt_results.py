@@ -155,9 +155,7 @@ def load_mgm2_run_summary(root: Path, prediction_metrics: pd.DataFrame) -> pd.Da
     return pd.DataFrame(rows)
 
 
-def load_mlp_metrics(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(path)
+def _load_one_mlp_metrics(path: Path, seed: int | str) -> pd.DataFrame:
     frame = pd.read_csv(path)
     frame["method"] = "MLP"
     frame["bray_curtis"] = frame["mlp_bray_curtis"].astype(float)
@@ -165,8 +163,28 @@ def load_mlp_metrics(path: Path) -> pd.DataFrame:
     frame["recipient_bray_curtis"] = frame["recipient_baseline_bray_curtis"].astype(float)
     frame["recipient_cosine"] = frame["recipient_baseline_cosine"].astype(float)
     frame["scale"] = "mlp"
-    frame["seed"] = -1
+    frame["seed"] = seed
     return frame
+
+
+def load_mlp_metrics(root: Path, legacy_path: Path | None = None) -> pd.DataFrame:
+    seed_paths = sorted(root.glob("seed_*/predicted_abundance.metrics.csv")) if root.exists() else []
+    frames = []
+    if seed_paths:
+        for path in seed_paths:
+            seed_raw = path.parent.name.replace("seed_", "")
+            seed = int(seed_raw) if seed_raw.isdigit() else seed_raw
+            frames.append(_load_one_mlp_metrics(path, seed))
+    elif legacy_path is not None and legacy_path.exists():
+        frames.append(_load_one_mlp_metrics(legacy_path, -1))
+    elif root.is_file():
+        frames.append(_load_one_mlp_metrics(root, -1))
+    if not frames:
+        searched = f"{root}/seed_*/predicted_abundance.metrics.csv"
+        if legacy_path is not None:
+            searched += f" or {legacy_path}"
+        raise FileNotFoundError(f"No MLP metrics found at {searched}")
+    return pd.concat(frames, ignore_index=True)
 
 
 def compute_mean_baseline(args) -> pd.DataFrame:
@@ -211,7 +229,7 @@ def build_plot_tables(mgm2: pd.DataFrame, mlp: pd.DataFrame, mean_base: pd.DataF
     ]
     value_cols = metadata_cols + ["method", "scale", "seed", "bray_curtis", "cosine", "recipient_bray_curtis", "recipient_cosine"]
 
-    recipient = mlp[metadata_cols + ["recipient_bray_curtis", "recipient_cosine"]].copy()
+    recipient = mlp[metadata_cols + ["recipient_bray_curtis", "recipient_cosine"]].drop_duplicates("target_id").copy()
     recipient["method"] = "Recipient"
     recipient["scale"] = "recipient"
     recipient["seed"] = -1
@@ -391,8 +409,14 @@ def save_improvement_box(per_target: pd.DataFrame, output: Path) -> None:
 def save_best_vs_mlp(per_target: pd.DataFrame, summary: pd.DataFrame, output: Path) -> str:
     mgm2_summary = summary[summary["method"].str.startswith("MGM2-")].sort_values("bray_curtis_mean")
     best_method = str(mgm2_summary.iloc[0]["method"])
-    mlp = per_target[per_target["method"] == "MLP"][["target_id", "bray_curtis", "cosine"]].rename(
-        columns={"bray_curtis": "mlp_bray", "cosine": "mlp_cosine"}
+    mlp = (
+        per_target[per_target["method"] == "MLP"]
+        .groupby("target_id", dropna=False)[["bray_curtis", "cosine"]]
+        .mean()
+        .reset_index()
+        .rename(
+            columns={"bray_curtis": "mlp_bray", "cosine": "mlp_cosine"}
+        )
     )
     best = per_target[per_target["method"] == best_method][["target_id", "bray_curtis", "cosine", "study"]].rename(
         columns={"bray_curtis": "best_bray", "cosine": "best_cosine"}
@@ -498,6 +522,7 @@ def parse_args() -> argparse.Namespace:
     )
     data_dir = Path("data/downstreams/FMT")
     parser.add_argument("--community_prediction_dir", type=Path, default=Path("outputs_downstreams/FMT/community_prediction"))
+    parser.add_argument("--mlp_dir", type=Path, default=Path("outputs_downstreams/FMT/mlp_baseline"))
     parser.add_argument("--mlp_metrics", type=Path, default=Path("outputs_downstreams/FMT/mlp_baseline/predicted_abundance.metrics.csv"))
     parser.add_argument("--train_data_file", type=Path, default=data_dir / "community_train.pkl")
     parser.add_argument("--train_metadata_file", type=Path, default=data_dir / "post_train_meta_split.csv")
@@ -514,7 +539,7 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     mgm2 = load_mgm2_metrics(args.community_prediction_dir)
-    mlp = load_mlp_metrics(args.mlp_metrics)
+    mlp = load_mlp_metrics(args.mlp_dir, args.mlp_metrics)
     mean_base = compute_mean_baseline(args)
     mgm2_test_runs = load_mgm2_run_summary(args.community_prediction_dir, mgm2)
     coverage = summarize_prediction_coverage(mgm2, mlp)

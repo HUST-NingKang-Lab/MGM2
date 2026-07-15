@@ -40,12 +40,13 @@ SCALE_LABELS = {
     "scale_xlarge": "MGM2-xlarge",
 }
 COMMUNITY_METHOD_ORDER = ["Recipient", "Mean-post", "MLP", "MGM2-small", "MGM2-medium", "MGM2-large", "MGM2-xlarge"]
-CLASS_METHOD_ORDER = ["Majority", "MLP", "MGM2-small", "MGM2-medium", "MGM2-large", "MGM2-xlarge"]
+CLASS_METHOD_ORDER = ["Majority", "MOZAIC-repro", "MLP", "MGM2-small", "MGM2-medium", "MGM2-large", "MGM2-xlarge"]
 COLORS = {
     "Recipient": "#777777",
     "Mean-post": "#B06B3A",
     "Majority": "#777777",
-    "MLP": "#2A9D8F",
+    "MOZAIC-repro": "#2A9D8F",
+    "MLP": "#E76F51",
     "MGM2-small": "#7CB5EC",
     "MGM2-medium": "#4363D8",
     "MGM2-large": "#1A237E",
@@ -439,7 +440,12 @@ def load_prediction_csv(path: Path, method: str, scale: str) -> pd.DataFrame:
     return frame
 
 
-def load_classification_results(mgm2_dir: Path, mlp_dir: Path, seeds: List[int] | None = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def load_classification_results(
+    mgm2_dir: Path,
+    mlp_dir: Path,
+    mozaic_dir: Path,
+    seeds: List[int] | None = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     metric_rows = []
     prediction_frames = []
     seed_set = set(seeds) if seeds else None
@@ -460,8 +466,25 @@ def load_classification_results(mgm2_dir: Path, mlp_dir: Path, seeds: List[int] 
         pred_path = path.parent / "test_predictions.csv"
         if pred_path.exists():
             prediction_frames.append(load_prediction_csv(pred_path, "MLP", "mlp"))
+    for path in sorted(mozaic_dir.glob("seed_*/fold_*/metrics.json")):
+        if seed_set and parse_seed(path) not in seed_set:
+            continue
+        metrics = read_json(path)
+        metric_rows.append(
+            {
+                "method": "MOZAIC-repro",
+                "scale": "mozaic_repro",
+                "seed": parse_seed(path),
+                "fold": parse_fold(path),
+                "source": str(path),
+                **metrics,
+            }
+        )
+        pred_path = path.parent / "test_predictions.csv"
+        if pred_path.exists():
+            prediction_frames.append(load_prediction_csv(pred_path, "MOZAIC-repro", "mozaic_repro"))
     if not metric_rows:
-        raise FileNotFoundError(f"No FMT 5-fold classification metrics found under {mgm2_dir} or {mlp_dir}")
+        raise FileNotFoundError(f"No FMT 5-fold classification metrics found under {mgm2_dir}, {mlp_dir}, or {mozaic_dir}")
     return pd.DataFrame(metric_rows), pd.concat(prediction_frames, ignore_index=True, sort=False)
 
 
@@ -658,7 +681,12 @@ def run_community_plots(args: argparse.Namespace, seeds: List[int] | None = None
 
 
 def run_classification_plots(args: argparse.Namespace, seeds: List[int] | None = None) -> None:
-    metrics, predictions = load_classification_results(args.community_classification_dir, args.mlp_classification_dir, seeds)
+    metrics, predictions = load_classification_results(
+        args.community_classification_dir,
+        args.mlp_classification_dir,
+        args.mozaic_classification_dir,
+        seeds,
+    )
     metrics, predictions = add_majority_baseline(args, metrics, predictions)
     metrics["method"] = pd.Categorical(metrics["method"], CLASS_METHOD_ORDER, ordered=True)
     metrics = metrics.sort_values(["method", "seed", "fold"]).reset_index(drop=True)
@@ -705,6 +733,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--community_classification_dir", type=Path, default=root / "community_classification")
     parser.add_argument("--mlp_community_dir", type=Path, default=root / "mlp_community_prediction")
     parser.add_argument("--mlp_classification_dir", type=Path, default=root / "mlp_classification")
+    parser.add_argument("--mozaic_classification_dir", type=Path, default=root / "mozaic_classification")
     parser.add_argument("--data_file", type=Path, default=data_dir / "community_all.pkl")
     parser.add_argument("--post_metadata_file", type=Path, default=data_dir / "post_all_meta.csv")
     parser.add_argument("--response_metadata_file", type=Path, default=data_dir / "response_all_meta.csv")
@@ -713,7 +742,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_folds", type=int, default=5)
     parser.add_argument("--val_ratio", type=float, default=0.1)
     parser.add_argument("--group_column", type=str, default="fmt_id")
-    parser.add_argument("--label_column", type=str, default="response_label")
+    parser.add_argument("--label_column", type=str, default="indication")
     parser.add_argument("--seeds", type=int, nargs="+", default=None, help="Filter by seed(s), e.g. --seeds 11 22")
     parser.add_argument("--skip_community", action="store_true")
     parser.add_argument("--skip_classification", action="store_true")
