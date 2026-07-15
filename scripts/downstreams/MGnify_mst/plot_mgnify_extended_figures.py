@@ -62,6 +62,7 @@ MODEL_ORDER = [
     "MGM2-large",
     "MGM2-xlarge",
 ]
+MGM2_MODEL_ORDER = ["MGM2-small", "MGM2-medium", "MGM2-large", "MGM2-xlarge"]
 MODEL_COLORS = {
     "RF": "#D4782B",
     "Expert": "#4E7B48",
@@ -108,7 +109,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train_metadata", type=Path, default=Path("data/downstreams/MGnify_mst/train_meta_split.csv"))
     parser.add_argument("--seed", type=int, default=11, help="Representative seed for class/confusion/embedding panels")
     parser.add_argument("--scatter_scales", nargs="+", default=MGM2_SCALES)
-    parser.add_argument("--scatter_models", nargs="+", default=MODEL_ORDER)
+    parser.add_argument("--scatter_models", nargs="+", default=MGM2_MODEL_ORDER)
     parser.add_argument("--scatter_levels", nargs="+", default=LEVELS)
     parser.add_argument("--embedding_scale", default="scale_xlarge")
     parser.add_argument("--embedding_level", default="env_level_1")
@@ -401,7 +402,7 @@ def plot_scale_heatmaps(args: argparse.Namespace, train_meta: pd.DataFrame, test
 
 def plot_class_frequency_scatter(args: argparse.Namespace, train_meta: pd.DataFrame, test_meta: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    requested_models = [model for model in MODEL_ORDER if model in set(args.scatter_models)]
+    requested_models = [model for model in MGM2_MODEL_ORDER if model in set(args.scatter_models)]
     exp_train = exp_test = None
     if {"Expert", "DeepPhylo"} & set(requested_models) and EXPERT_TRAIN_META.exists() and EXPERT_TEST_META.exists():
         exp_train = read_csv(EXPERT_TRAIN_META)
@@ -538,11 +539,20 @@ def plot_class_frequency_scatter(args: argparse.Namespace, train_meta: pd.DataFr
                 s=np.clip(np.sqrt(model_sub["n_test"]) * 2.1, 16, 135),
                 alpha=0.68,
                 color=MODEL_COLORS.get(model_name, "#777777"),
-                marker=MODEL_MARKERS.get(model_name, "o"),
+                marker="o",
                 label=model_name if level == levels[0] else None,
                 edgecolor="white",
                 linewidth=0.5,
             )
+            if model_sub["n_test"].nunique() >= 2:
+                fit_data = model_sub.sort_values("n_test")
+                ax.plot(
+                    fit_data["n_test"],
+                    fit_data["auc"],
+                    color=MODEL_COLORS.get(model_name, "#777777"),
+                    linewidth=1.5,
+                    alpha=0.9,
+                )
         ax.set_xscale("log")
         ax.set_title(level_label)
         ax.set_xlabel("Class test samples")
@@ -552,7 +562,7 @@ def plot_class_frequency_scatter(args: argparse.Namespace, train_meta: pd.DataFr
     axes[0].set_ylabel("Per-class AUROC")
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, frameon=False, fontsize=8, ncol=4, loc="lower center", bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle("Class frequency vs per-class separability across MGnify models", y=1.04, fontweight="bold")
+    fig.suptitle("Class frequency vs MGM2 per-class separability", y=1.04, fontweight="bold")
     fig.tight_layout()
     savefig(fig, args.output_dir, "main_class_frequency_vs_auc")
     return scores
@@ -818,6 +828,13 @@ def main() -> None:
     test_meta["SampleID"] = test_meta["SampleID"].astype(str).str.strip()
     train_meta["SampleID"] = train_meta["SampleID"].astype(str).str.strip()
 
+    if args.only_embedding:
+        print(
+            "Embedding UMAP/AvgBIO has moved to "
+            "scripts/downstreams/MGnify_mst/plot_mgnify_embedding_umap.py"
+        )
+        return
+
     if args.only_class_frequency:
         class_scores = plot_class_frequency_scatter(args, train_meta, test_meta)
         print(f"Per-class scores: {len(class_scores)} rows")
@@ -830,8 +847,6 @@ def main() -> None:
         plot_confusion_matrices(args, test_meta, scale=diagnostic_scale)
         confidence = plot_confidence_calibration(args, test_meta, scale=diagnostic_scale)
         print(f"Confidence rows: {len(confidence)}")
-    if (not args.skip_embedding and not args.only_class_frequency) or args.only_embedding:
-        extract_embedding_panel(args, test_meta)
     print(f"Done. {args.output_dir}")
 
 
