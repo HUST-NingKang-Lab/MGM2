@@ -9,9 +9,6 @@ microbial representations and one fixed-size community embedding.
   <a href="https://huggingface.co/LudensZhang/MGM2">
     <img alt="MGM2 on Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-MGM2-FFD21E?logo=huggingface&logoColor=000">
   </a>
-  <a href="https://huggingface.co/InstaDeepAI/NTv3_650M_pre">
-    <img alt="NTv3 on Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-NTv3-4C6EF5?logo=huggingface&logoColor=fff">
-  </a>
   <img alt="Python 3.10" src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=fff">
   <img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-Lightning-EE4C2C?logo=pytorch&logoColor=fff">
 </p>
@@ -245,3 +242,14 @@ print(embeddings.shape)
 For HDF5 output, `embeddings` has shape
 `[number_of_samples, model_hidden_size]` and follows the order in
 `sample_ids`.
+
+## Acknowledgements
+
+We sincerely thank the authors of the following open-source projects:
+
+- [NTv3](https://huggingface.co/InstaDeepAI/NTv3_650M_pre)
+- [Qwen3 Embedding](https://huggingface.co/Qwen/Qwen3-Embedding-8B)
+- [PyTorch](https://pytorch.org/)
+- [PyTorch Lightning](https://lightning.ai/docs/pytorch/stable/)
+- [Hugging Face Transformers](https://huggingface.co/docs/transformers/)
+- [Hugging Face Hub](https://huggingface.co/)
