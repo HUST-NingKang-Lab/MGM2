@@ -18,7 +18,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 SCALES = ('small', 'medium', 'large', 'xlarge')
 
 
-MODEL_CARD = r"""---
+HF_FRONT_MATTER = """---
 library_name: pytorch
 pipeline_tag: feature-extraction
 tags:
@@ -28,116 +28,11 @@ tags:
 - feature-extraction
 ---
 
-# MGM2: A Foundation Model for Microbial Communities
-
-MGM2 converts a microbial community into contextualized microbial-token
-representations and one fixed-size community embedding. It combines
-1,536-dimensional NTv3 microbial identity vectors with relative-abundance
-signals in an abundance-aware Transformer.
-
-## Included Models
-
-| Directory | Hidden size | Layers | Heads | Community embedding |
-| --- | ---: | ---: | ---: | ---: |
-| `models/small` | 224 | 6 | 4 | 224 |
-| `models/medium` | 320 | 6 | 5 | 320 |
-| `models/large` | 384 | 8 | 6 | 384 |
-| `models/xlarge` | 512 | 10 | 8 | 512 |
-
-Each model directory contains:
-
-- `model.ckpt`: an inference-only Lightning checkpoint derived from the
-  released `last.ckpt`, without optimizer state or training hyperparameters;
-- `config.json`: the matching architecture and abundance configuration.
-
-Shared identity resources are stored once under `embeddings/`:
-
-- `reference_ntv3_embeddings.h5`: NTv3 embeddings keyed by reference OTU ID;
-- `taxonomy_fallback.h5`: rank-aware taxonomy prototypes for inputs without
-  representative sequences.
-
-## Download
-
-```python
-from huggingface_hub import snapshot_download
-
-snapshot_download(
-    repo_id="<HUGGINGFACE_REPO_ID>",
-    local_dir="MGM2-release",
-)
-```
-
-Replace `<HUGGINGFACE_REPO_ID>` with the ID of this model repository.
-
-## Obtain MGM2 Embeddings
-
-The inference utilities are maintained in the
-[MGM2 source repository](https://github.com/HUST-NingKang-Lab/MGM2).
-
-### Input with OTU or ASV sequences
-
-The FASTA record IDs must match the feature IDs in the abundance table.
-
-```bash
-python ntv3_embedding.py \
-  --fasta_path communities.fasta \
-  --model_path /path/to/NTv3_650M_pre \
-  --output_path community_ntv3_embeddings.h5 \
-  --gpu_ids 0
-
-python src/data/build_dataset.py \
-  --otu_table community_table.csv \
-  --format csv \
-  --ntv3_embedding community_ntv3_embeddings.h5 \
-  --top_k_otus 768 \
-  --output community_input.pkl
-```
-
-### Input with species names
-
-Species names can be bare names such as `Bacteroides fragilis`, rank-prefixed
-names such as `s__Bacteroides fragilis`, or complete taxonomy paths.
-
-```bash
-python src/data/build_dataset.py \
-  --otu_table community_species.csv \
-  --format csv \
-  --ntv3_embedding MGM2-release/embeddings/reference_ntv3_embeddings.h5 \
-  --fallback_embedding MGM2-release/embeddings/taxonomy_fallback.h5 \
-  --resolved_embedding community_resolved_embeddings.h5 \
-  --top_k_otus 768 \
-  --output community_input.pkl
-```
-
-Name matching is rank aware and uses only unambiguous names. The resolved HDF5
-records `embedding_source` and `matched_taxon_key` for inspection.
-
-### Extract the community representation
-
-```bash
-python scripts/extract_community_embeddings.py \
-  --model_dir MGM2-release/models/small \
-  --data_file community_input.pkl \
-  --output community_embeddings.h5 \
-  --embedding_strategy cls \
-  --device cuda:0
-```
-
-`cls` is the recommended general-purpose representation. `mean_pool` exports
-the mean of contextualized microbial tokens. `qwen3_proj` is available because
-the released checkpoints include the alignment head.
-
-## Output
-
-HDF5 output contains `sample_ids` and an `embeddings` matrix with shape
-`[number_of_communities, hidden_size]`. The extractor also supports NPZ and
-CSV output by changing the output filename extension.
-
-## Citation
-
-If you use MGM2 in your research, please cite the accompanying paper. Complete
-citation metadata will be added with the model release.
 """
+
+
+def render_model_card() -> str:
+    return HF_FRONT_MATTER + (PROJECT_ROOT / 'README.md').read_text()
 
 
 GIT_ATTRIBUTES = """*.ckpt filter=lfs diff=lfs merge=lfs -text
@@ -315,10 +210,12 @@ def build_bundle(args: argparse.Namespace) -> Tuple[Path, Dict[str, str]]:
     output = args.output.expanduser().resolve()
     reference_embedding = require_file(args.reference_embedding, 'Reference NTv3 embedding')
     fallback_embedding = require_file(args.fallback_embedding, 'Taxonomy fallback embedding')
+    pipeline_image = require_file(PROJECT_ROOT / 'pipeline.png', 'Pipeline figure')
 
     if output.exists() and not args.overwrite:
         raise FileExistsError(f'Output directory already exists: {output}; pass --overwrite to rebuild it')
     output.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(pipeline_image, output / 'pipeline.png')
 
     placement_modes: Dict[str, str] = {}
     for scale in SCALES:
@@ -359,7 +256,7 @@ def build_bundle(args: argparse.Namespace) -> Tuple[Path, Dict[str, str]]:
         embedding_dir / 'taxonomy_fallback.h5',
     )
 
-    (output / 'README.md').write_text(MODEL_CARD)
+    (output / 'README.md').write_text(render_model_card())
     (output / '.gitattributes').write_text(GIT_ATTRIBUTES)
 
     manifest = {
