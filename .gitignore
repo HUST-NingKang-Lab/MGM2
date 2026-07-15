@@ -14,6 +14,7 @@ env/
 
 # Large data and model artifacts
 /data/
+huggingface_upload/
 ntv3_embeddings/
 qwen3_embeddings/
 checkpoints/
