@@ -319,3 +319,4 @@ def test_strict_quality_validation_flags_shallow_complete_outputs(tmp_path):
     assert strict["valid"] is False
     assert strict["quality_warnings"]
     assert any("visualization_priority" in item["warning"] for item in strict["quality_warnings"])
+    assert any("needs confidence" in item["warning"] for item in strict["quality_warnings"])

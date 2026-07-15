@@ -185,6 +185,8 @@ def _quality_warnings_for_outputs(feature_dir: Path) -> list[Dict[str, str]]:
             warn("final_validation.json", "use an acceptance string, not a bare accepted boolean")
         if "acceptance" not in final_validation:
             warn("final_validation.json", "needs acceptance string: accepted, accepted_with_caveats, accepted_as_artifact, accepted_as_unclear, or rejected")
+        if final_validation.get("confidence") not in {"high", "medium", "low"}:
+            warn("final_validation.json", "needs confidence: high, medium, or low")
         for key in ["specificity", "overgeneralization_risk", "artifact_judgment", "test_split_use"]:
             if key not in final_validation:
                 warn("final_validation.json", f"missing {key}")
