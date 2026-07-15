@@ -41,6 +41,19 @@ logger = logging.getLogger(__name__)
 class MGM2DatasetBuilder:
     """Builds MGM2 training datasets from OTU tables and NTv3 embeddings."""
 
+    TAXON_RANKS = ('kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species')
+    TAXON_PREFIX_TO_RANK = {
+        'sk': 'kingdom',
+        'k': 'kingdom',
+        'd': 'kingdom',
+        'p': 'phylum',
+        'c': 'class',
+        'o': 'order',
+        'f': 'family',
+        'g': 'genus',
+        's': 'species',
+    }
+
     def __init__(
         self,
         ntv3_embedding_path: str,
@@ -94,36 +107,30 @@ class MGM2DatasetBuilder:
 
     @classmethod
     def _parse_taxonomy_label(cls, label: str) -> Dict[str, str]:
-        """Parse plain or prefixed taxonomy labels into broad-to-specific ranks."""
-        rank_order = ('kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species')
+        """Parse plain or rank-prefixed taxonomy labels."""
         if '__' not in str(label):
             parts = [cls._clean_taxon_name(part) for part in str(label).split(';')]
             parts = [part for part in parts if part]
-            return {rank: value for rank, value in zip(rank_order, parts)}
+            return {rank: value for rank, value in zip(cls.TAXON_RANKS, parts)}
 
-        levels = []
+        rank_to_name: Dict[str, str] = {}
         for token in str(label).split(';'):
             token = token.strip()
-            if '__' in token:
-                prefix, name = token.split('__', 1)
-                if prefix.lower() not in {'sk', 'k', 'd', 'p', 'c', 'o', 'f', 'g', 's'}:
-                    continue
-                name = cls._clean_taxon_name(name)
-                if name:
-                    levels.append(name)
-            else:
-                name = cls._clean_taxon_name(token)
-                if name:
-                    levels.append(name)
-        return {rank: value for rank, value in zip(rank_order, levels)}
+            if '__' not in token:
+                continue
+            prefix, name = token.split('__', 1)
+            rank = cls.TAXON_PREFIX_TO_RANK.get(prefix.strip().lower())
+            name = cls._clean_taxon_name(name)
+            if rank is not None and name:
+                rank_to_name[rank] = name
+        return rank_to_name
 
     @classmethod
     def _build_taxon_keys(cls, label: str) -> List[Tuple[str, str]]:
         rank_to_name = cls._parse_taxonomy_label(label)
-        rank_order = ('kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species')
         keys = []
         path = []
-        for rank in rank_order:
+        for rank in cls.TAXON_RANKS:
             name = rank_to_name.get(rank)
             if not name:
                 continue
@@ -131,14 +138,78 @@ class MGM2DatasetBuilder:
             keys.append((rank, f"{rank}|{';'.join(path)}"))
         return keys
 
+    @staticmethod
+    def _normalize_taxon_alias(name: str) -> str:
+        return ' '.join(str(name).strip().replace('_', ' ').split()).casefold()
+
+    @classmethod
+    def _terminal_alias_candidates(cls, label: str) -> List[Tuple[str, str]]:
+        label = str(label).strip()
+        if ';' not in label and '__' not in label:
+            return [(rank, label) for rank in reversed(cls.TAXON_RANKS)]
+
+        rank_to_name = cls._parse_taxonomy_label(label)
+        return [
+            (rank, rank_to_name[rank])
+            for rank in reversed(cls.TAXON_RANKS)
+            if rank in rank_to_name
+        ]
+
+    @classmethod
+    def _lookup_terminal_alias(
+        cls,
+        label: str,
+        terminal_aliases: Dict[str, Dict[str, str]],
+    ) -> Optional[Tuple[str, str]]:
+        for rank, name in cls._terminal_alias_candidates(label):
+            alias = cls._normalize_taxon_alias(name)
+            matched_key = terminal_aliases.get(rank, {}).get(alias)
+            if matched_key is not None:
+                return rank, matched_key
+        return None
+
     def _load_fallback_embeddings(self):
         if not self.fallback_embedding_path:
-            return {}, None
+            return {}, None, {}
         with h5py.File(self.fallback_embedding_path, 'r') as f:
             taxon_keys = self._decode_h5_strings(f['taxon_keys'][:])
             taxon_embeddings = f['taxon_embeddings'][:].astype(np.float32)
             global_embedding = f['global_embedding'][:].astype(np.float32) if 'global_embedding' in f else None
-        return {key: taxon_embeddings[idx] for idx, key in enumerate(taxon_keys)}, global_embedding
+            taxon_ranks = (
+                self._decode_h5_strings(f['taxon_ranks'][:])
+                if 'taxon_ranks' in f
+                else [key.partition('|')[0] for key in taxon_keys]
+            )
+            taxon_paths = (
+                self._decode_h5_strings(f['taxon_paths'][:])
+                if 'taxon_paths' in f
+                else [key.partition('|')[2] for key in taxon_keys]
+            )
+
+        if len(taxon_embeddings) != len(taxon_keys):
+            raise ValueError('Fallback taxon_embeddings and taxon_keys must have the same length')
+        if len(taxon_ranks) != len(taxon_keys) or len(taxon_paths) != len(taxon_keys):
+            raise ValueError('Fallback taxonomy metadata must align with taxon_keys')
+
+        fallback_map = {key: taxon_embeddings[idx] for idx, key in enumerate(taxon_keys)}
+        alias_candidates: Dict[str, Dict[str, set]] = {}
+        for key, rank, path in zip(taxon_keys, taxon_ranks, taxon_paths):
+            rank = str(rank).strip().lower()
+            terminal_name = self._clean_taxon_name(str(path).rsplit(';', 1)[-1])
+            if rank not in self.TAXON_RANKS or not terminal_name:
+                continue
+            alias = self._normalize_taxon_alias(terminal_name)
+            alias_candidates.setdefault(rank, {}).setdefault(alias, set()).add(key)
+
+        terminal_aliases = {
+            rank: {
+                alias: next(iter(keys))
+                for alias, keys in rank_aliases.items()
+                if len(keys) == 1
+            }
+            for rank, rank_aliases in alias_candidates.items()
+        }
+        return fallback_map, global_embedding, terminal_aliases
 
     def _default_resolved_embedding_path(self, output_path: str) -> str:
         return str(Path(output_path).with_suffix('.resolved_embeddings.h5'))
@@ -159,7 +230,7 @@ class MGM2DatasetBuilder:
             }
             return
 
-        fallback_map, global_embedding = self._load_fallback_embeddings()
+        fallback_map, global_embedding, terminal_aliases = self._load_fallback_embeddings()
         resolved_embeddings = []
         resolved_ids = []
         resolved_sources = []
@@ -183,6 +254,12 @@ class MGM2DatasetBuilder:
                             source = f'fallback:{rank}'
                             matched_key = key
                             break
+                    if embedding is None:
+                        alias_match = self._lookup_terminal_alias(feature_id, terminal_aliases)
+                        if alias_match is not None:
+                            rank, matched_key = alias_match
+                            embedding = fallback_map[matched_key]
+                            source = f'fallback:{rank}_name'
                     if embedding is None and global_embedding is not None:
                         embedding = global_embedding
                         source = 'fallback:global'

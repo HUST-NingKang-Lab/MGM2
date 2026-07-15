@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_folds", type=int, default=5)
     parser.add_argument("--val_ratio", type=float, default=0.1)
     parser.add_argument("--group_column", type=str, default="fmt_id")
-    parser.add_argument("--label_column", type=str, default="response_label")
+    parser.add_argument("--label_column", type=str, default="indication")
     parser.add_argument("--hidden_size", type=int, default=256)
     parser.add_argument("--num_layers", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.2)
@@ -106,7 +106,7 @@ def main() -> None:
         group_column=args.group_column,
         label_column=args.label_column,
     )
-    counts = split_summary(arrays.metadata, train_idx, val_idx, test_idx, group_column=args.group_column)
+    counts = split_summary(arrays.metadata, train_idx, val_idx, test_idx, group_column=args.group_column, label_column=args.label_column)
     print(
         f"FMT MLP response fold {args.fold_index + 1}/{args.num_folds}: "
         f"train={counts['train_events']} val={counts['val_events']} test={counts['test_events']}"
@@ -132,6 +132,7 @@ def main() -> None:
         num_folds=args.num_folds,
         seed=args.seed,
         group_column=args.group_column,
+        label_column=args.label_column,
     )
     print(f"Wrote FMT 5-fold MLP response results to {args.output_dir}")
 

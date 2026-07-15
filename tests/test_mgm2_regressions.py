@@ -1567,6 +1567,28 @@ class MGM2RegressionTests(unittest.TestCase):
         self.assertIn("tee -a", script_text)
         self.assertIn("src/training/Pretrain.py", script_text)
 
+    def test_stage2_qwen0_script_runs_all_scales_with_zero_alignment_weight(self):
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "grid_search_pretrain_stage2_qwen0.sh"
+        script_text = script_path.read_text()
+
+        self.assertTrue(script_path.exists())
+        self.assertIn('OUTPUT_ROOT="outputs_grid/stage2_qwen0"', script_text)
+        self.assertIn('EXPERIMENT_PREFIX="stage2_qwen0"', script_text)
+        self.assertIn('"scale_small|224|6|4|896|1024"', script_text)
+        self.assertIn('"scale_medium|320|6|5|1280|512"', script_text)
+        self.assertIn('"scale_large|384|8|6|1536|512"', script_text)
+        self.assertIn('"scale_xlarge|512|10|8|2048|256"', script_text)
+        self.assertIn("--set qwen3_alignment.enabled=true", script_text)
+        self.assertIn("--set qwen3_alignment.embedding_path=", script_text)
+        self.assertIn("--set qwen3_alignment.loss_weight=0.0", script_text)
+        self.assertIn("--enable_qwen3_alignment", script_text)
+        self.assertIn('--qwen3_embedding_path "${QWEN3_EMBEDDING_PATH}"', script_text)
+        self.assertIn('resume_ckpt="${run_dir}/checkpoints/last.ckpt"', script_text)
+        self.assertIn('--resume "${resume_ckpt}"', script_text)
+        self.assertIn("latest_metrics_csv", script_text)
+        self.assertNotIn("REUSE_SMALL_FROM_BASE_CONFIG=true", script_text)
+        self.assertNotIn("Reusing small model result", script_text)
+
     def test_mgnify_mst_build_script_converts_train_and_test_without_labels(self):
         script_path = (
             Path(__file__).resolve().parents[1]
