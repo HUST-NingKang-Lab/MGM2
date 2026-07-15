@@ -39,6 +39,10 @@ MGM2.0_USAGE_GUIDE.md
 scripts/view_atlas_data.py
 scripts/view_ntv3_embedding.py
 scripts/__pycache__/
+revision_workspace/
+manuscript/
+docs/*_manuscript_summary.md
+*.orig
 
 # OS files
 .DS_Store
