@@ -1,172 +1,205 @@
 # MGM2: A Foundation Model for Microbial Communities
 
-MGM2 is a Transformer-based foundation model for learning representations of microbial communities from taxon abundance profiles. Each community is represented as a set of microbial features initialized with NTv3 embeddings and paired with their relative abundances. MGM2 pretraining masks the abundance channel while preserving microbial identity, encouraging the model to learn ecological context and abundance structure across communities.
+MGM2 encodes a microbial community into contextualized microbial-token representations and a single community-level embedding. It combines sequence-derived NTv3 representations of microbial identity with relative-abundance signals in an abundance-aware Transformer.
 
-![Overview of the MGM2 pipeline](pipeline.png)
+![MGM2 model overview](pipeline.png)
 
-The repository contains the MGM2 model, data preprocessing and pretraining code, scale-specific configurations, downstream task workflows, and representation analysis utilities.
+## Model
 
-## Model overview
+Each nonzero microbial feature is represented by:
 
-MGM2 combines pretrained microbial feature embeddings with abundance-aware Transformer encoding. A learnable community-level `[CLS]` token provides a sample representation for downstream prediction, while contextualized microbial tokens support feature-level tasks.
+- a 1,536-dimensional NTv3 embedding describing microbial identity;
+- its relative abundance in the community; and
+- contextual information learned from the other members of the same community.
 
-Pretraining uses two complementary masked objectives:
+A learnable `[CLS]` token aggregates the complete community into one fixed-size vector. MGM2 is trained with masked abundance-bin classification and masked log-abundance regression. Only abundance values are masked; microbial identity remains visible so that the model learns community context and abundance structure.
 
-1. **Masked abundance-bin classification** predicts a discretized abundance category for masked microbial features. Quantile binning can be performed independently within each sample, allowing the objective to model community-relative abundance structure.
-2. **Masked log-abundance regression** reconstructs continuous transformed abundance values. Regression supervision can be restricted to the highest abundance bins through `regression_top_k_bins`.
+The exported community representations are:
 
-Only the abundance signal is corrupted during masking; microbial feature identity remains available to the model. The combined objective is controlled by `loss.lambda_bin` and `loss.lambda_regression` in the JSON configuration.
+- `cls`: the `[CLS]` hidden state. This is the recommended general-purpose MGM2 embedding.
+- `mean_pool`: the attention-mask-aware mean of contextualized microbial tokens, excluding `[CLS]`.
+- `qwen3_proj`: the projected `[CLS]` representation from models released with a Qwen3 alignment head.
 
-MGM2 also supports **optional sample-level Qwen3 alignment**. When enabled, the community `[CLS]` representation is projected into the space of sample metadata embeddings and trained with a contrastive alignment objective. Samples without a corresponding metadata embedding remain available to the abundance objectives and are excluded only from the alignment loss.
+## Model Sizes
 
-## Model scales
+All MGM2 sizes share the same input representation and output interface.
 
-The standard MGM2 family provides four model sizes with a shared input representation and training objective:
-
-| Scale | Hidden size | Transformer layers | Attention heads | Feed-forward size |
+| Model | Hidden size | Transformer layers | Attention heads | Feed-forward size |
 | --- | ---: | ---: | ---: | ---: |
-| Small | 224 | 6 | 4 | 896 |
-| Medium | 320 | 6 | 5 | 1,280 |
-| Large | 384 | 8 | 6 | 1,536 |
-| XLarge | 512 | 10 | 8 | 2,048 |
+| MGM2-small | 224 | 6 | 4 | 896 |
+| MGM2-medium | 320 | 6 | 5 | 1,280 |
+| MGM2-large | 384 | 8 | 6 | 1,536 |
+| MGM2-xlarge | 512 | 10 | 8 | 2,048 |
 
-Scale presets are defined in [`scripts/grid_search_pretrain_stage2.sh`](scripts/grid_search_pretrain_stage2.sh). Custom architectures can be created by changing the `model` section of an MGM2 JSON configuration.
-
-## Repository layout
-
-```text
-MGM2/
-├── src/
-│   ├── configs/              # Typed configuration and default JSON config
-│   ├── data/                 # Dataset builders, preprocessing, and loaders
-│   ├── losses/               # Pretraining and downstream objectives
-│   ├── metrics/              # Shared evaluation metrics
-│   ├── models/               # MGM2 backbone and task-specific models
-│   ├── sae_interpretation/   # Sparse feature interpretation components
-│   └── training/             # Pretraining and downstream entry points
-├── scripts/
-│   ├── downstreams/          # Reproducible downstream workflows
-│   ├── regular_analysis/     # Embedding and fallback analyses
-│   ├── sae/                  # Sparse autoencoder workflows
-│   └── sae_interpretation/   # Feature interpretation pipeline
-├── tests/                    # Unit and regression tests
-├── pipeline.png              # Model and analysis pipeline
-└── README.md
-```
+The dimension of a `cls` or `mean_pool` embedding is the hidden size of the selected model.
 
 ## Installation
 
-MGM2 is developed in Python with PyTorch and PyTorch Lightning. Dataset preparation additionally uses NumPy, pandas, SciPy, h5py, tqdm, and `biom-format` when BIOM input is required. Create an isolated environment and install versions compatible with the CUDA and PyTorch installation on the target system.
+MGM2 requires Python, PyTorch, PyTorch Lightning, NumPy, pandas, SciPy, h5py, tqdm, Transformers, and Biopython. A minimal environment can be created with:
 
-Run commands from the repository root so that the local `src` package is available.
+```bash
+conda create -n mgm2 python=3.10
+conda activate mgm2
+pip install torch pytorch-lightning numpy pandas scipy h5py tqdm transformers biopython huggingface_hub
+```
 
-## Build a pretraining dataset
+Run the commands below from the repository root so that the local `src` package is importable.
 
-The dataset builder accepts CSV, TSV, HDF5, and BIOM community tables. It stores nonzero relative abundances and feature indices in a serialized dataset; abundance transformation and masking are applied by the training data pipeline.
+## Download a Model
+
+MGM2 weights and their matching model resources will be published on Hugging Face. Replace the placeholder with the repository ID from the selected model card:
+
+```python
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id="<HUGGINGFACE_REPO_ID>",
+    local_dir="models/MGM2-small",
+)
+```
+
+The commands below assume this model bundle layout:
+
+```text
+models/MGM2-small/
+├── config.json
+├── model.ckpt
+├── reference_ntv3_embeddings.h5
+└── taxonomy_fallback.h5
+```
+
+`last.ckpt` and `checkpoints/last.ckpt` are also recognized automatically in place of `model.ckpt`.
+
+## Community Input
+
+MGM2 accepts a feature-by-sample CSV or TSV table. The first column contains feature identifiers; each remaining column is one community. Values may be counts or abundances because the input builder converts each sample to relative abundance.
+
+```csv
+feature_id,sample_A,sample_B
+OTU_001,120,0
+OTU_002,35,82
+OTU_003,0,17
+```
+
+There are two supported ways to assign microbial identity embeddings.
+
+## Option A: OTU or ASV Sequences
+
+Use this route when representative nucleotide sequences are available. Every FASTA record ID must exactly match the corresponding row identifier in the community table.
+
+```fasta
+>OTU_001
+ACGT...
+>OTU_002
+TGCA...
+```
+
+First encode the sequences with NTv3:
+
+```bash
+python ntv3_embedding.py \
+  --fasta_path communities.fasta \
+  --model_path /path/to/NTv3_650M_pre \
+  --output_path community_ntv3_embeddings.h5 \
+  --gpu_ids 0
+```
+
+Then organize the abundance table as MGM2 input:
 
 ```bash
 python src/data/build_dataset.py \
-  --otu_table data/otu_table.csv \
+  --otu_table community_table.csv \
   --format csv \
-  --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5 \
+  --ntv3_embedding community_ntv3_embeddings.h5 \
   --top_k_otus 768 \
-  --output data/pretrain_dataset.pkl
+  --output community_input.pkl
 ```
 
-Set `--top_k_otus 0` to retain all nonzero features. For community tables whose feature identifiers are not directly represented in the NTv3 vocabulary, a taxonomy-derived fallback embedding file can be supplied:
+`--top_k_otus 768` keeps the 768 most abundant nonzero features in each community. Use `--top_k_otus 0` to keep all nonzero features.
+
+## Option B: Species Names
+
+Use this route when representative sequences are unavailable and the table contains taxonomic names. Bare or rank-prefixed species names are accepted:
+
+```csv
+feature_id,sample_A,sample_B
+Bacteroides fragilis,0.21,0.08
+s__Faecalibacterium prausnitzii,0.09,0.17
+g__Bifidobacterium,0.03,0.11
+```
+
+Resolve those names with the taxonomy fallback resource distributed with the selected MGM2 model:
 
 ```bash
 python src/data/build_dataset.py \
-  --otu_table data/otu_table.tsv \
-  --format tsv \
-  --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5 \
-  --fallback_embedding ntv3_embeddings/taxonomy_fallback.h5 \
-  --resolved_embedding data/resolved_embeddings.h5 \
+  --otu_table community_species.csv \
+  --format csv \
+  --ntv3_embedding models/MGM2-small/reference_ntv3_embeddings.h5 \
+  --fallback_embedding models/MGM2-small/taxonomy_fallback.h5 \
+  --resolved_embedding community_resolved_embeddings.h5 \
   --top_k_otus 768 \
-  --output data/pretrain_dataset.pkl
+  --output community_input.pkl
 ```
 
-Fallback embedding files can be generated with [`scripts/build_taxonomy_ntv3_fallback.py`](scripts/build_taxonomy_ntv3_fallback.py). Validate prepared resources before training with [`scripts/validate_dataset.py`](scripts/validate_dataset.py) and [`scripts/validate_ntv3_embedding.py`](scripts/validate_ntv3_embedding.py).
+Name-only matching is rank aware and accepts only an unambiguous name within a taxonomic rank. A full rank-prefixed path is preferable when available:
 
-## Pretraining
+```text
+d__Bacteria;p__Bacteroidota;c__Bacteroidia;o__Bacteroidales;f__Bacteroidaceae;g__Bacteroides;s__Bacteroides fragilis
+```
 
-The default configuration is [`src/configs/mgm2_default.json`](src/configs/mgm2_default.json). A standard pretraining run is launched with:
+`community_resolved_embeddings.h5` records `embedding_source` and `matched_taxon_key` for every resolved feature. Exact NTv3 identifiers are marked `ntv3`; name matches are marked, for example, `fallback:species_name`. The global fallback is used only when no exact identifier, taxonomy path, or unambiguous taxon name can be resolved.
+
+## Extract Community Embeddings
+
+Both input routes produce the same `community_input.pkl` interface. Extract unlabeled MGM2 embeddings with:
 
 ```bash
-python src/training/Pretrain.py \
-  --data_file data/pretrain_dataset.pkl \
-  --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5 \
-  --config src/configs/mgm2_default.json \
-  --output_dir outputs_mgm2/pretrain \
-  --experiment_name mgm2_pretrain \
-  --devices 0
+python scripts/extract_community_embeddings.py \
+  --model_dir models/MGM2-small \
+  --data_file community_input.pkl \
+  --output community_embeddings.h5 \
+  --embedding_strategy cls \
+  --batch_size 64 \
+  --device cuda:0
 ```
 
-To enable sample-level metadata alignment, provide precomputed Qwen3 embeddings keyed by sample identifier:
+The embedding resource path stored in `community_input.pkl` is used automatically. Pass `--ntv3_embedding_path` only when that resource has moved.
+
+To use an explicit checkpoint instead of a model directory:
 
 ```bash
-python src/training/Pretrain.py \
-  --data_file data/pretrain_dataset.pkl \
-  --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5 \
-  --config src/configs/mgm2_default.json \
-  --enable_qwen3_alignment \
-  --qwen3_embedding_path qwen3_embeddings/sample_metadata.h5 \
-  --output_dir outputs_mgm2/pretrain_qwen3 \
-  --experiment_name mgm2_pretrain_qwen3 \
-  --devices 0
+python scripts/extract_community_embeddings.py \
+  --checkpoint /path/to/model.ckpt \
+  --config /path/to/config.json \
+  --data_file community_input.pkl \
+  --output community_embeddings.npz \
+  --embedding_strategy mean_pool \
+  --device cuda:0
 ```
 
-Sample-level Qwen3 targets can be prepared with [`qwen3_keywords_embedding.py`](qwen3_keywords_embedding.py). The alignment objective is disabled by default and can be configured through the `qwen3_alignment` section.
+The output format is selected by extension:
 
-### Resume from a checkpoint
+| Extension | Contents |
+| --- | --- |
+| `.h5` or `.hdf5` | `embeddings`, `sample_ids`, and model provenance attributes |
+| `.npz` | compressed `embeddings`, `sample_ids`, and provenance arrays |
+| `.csv` | one row per sample with `sample_id` and embedding columns |
 
-Each run saves periodic checkpoints and `last.ckpt` under its output directory. Resume the complete optimizer and training state with `--resume`:
+For HDF5 output, `embeddings` has shape `[number_of_samples, hidden_size]` and follows the order in `sample_ids`.
 
-```bash
-python src/training/Pretrain.py \
-  --data_file data/pretrain_dataset.pkl \
-  --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5 \
-  --config outputs_mgm2/pretrain/config.json \
-  --output_dir outputs_mgm2/pretrain \
-  --experiment_name mgm2_pretrain \
-  --devices 0 \
-  --resume outputs_mgm2/pretrain/checkpoints/last.ckpt
+## Load the Result
+
+```python
+import h5py
+
+with h5py.File("community_embeddings.h5", "r") as handle:
+    sample_ids = handle["sample_ids"].asstr()[:]
+    embeddings = handle["embeddings"][:]
+
+print(sample_ids.shape)
+print(embeddings.shape)
 ```
-
-Use the same dataset, embedding resources, and model configuration when resuming a run.
-
-## Downstream tasks
-
-MGM2 representations can be used as frozen features or fine-tuned with task-specific heads. The repository includes workflows for:
-
-- [Microbial community classification on MGnify](scripts/downstreams/MGnify_mst/)
-- [FMT community and response prediction](scripts/downstreams/FMT/)
-- [FMT analysis on the Cell Reports cohort](scripts/downstreams/FMT_cellreports/)
-- [Drug perturbation response prediction](scripts/downstreams/drug_perturbation/)
-- [Wastewater temporal forecasting](scripts/downstreams/wastewater/)
-- [Token-level wastewater forecasting](scripts/downstreams/wastewater_v2/)
-- [Global wastewater abundance forecasting](scripts/downstreams/wastewater_global_forecast/)
-
-Sparse autoencoder training and feature interpretation workflows are available under [`scripts/sae/`](scripts/sae/) and [`scripts/sae_interpretation/`](scripts/sae_interpretation/).
-
-Each downstream directory contains the data preparation, training, evaluation, or plotting entry points used for that task. Paths to datasets, embeddings, checkpoints, output directories, and accelerator devices should be adapted to the local environment before launching shell workflows.
-
-## Data and pretrained checkpoints
-
-Large datasets, embedding matrices, and pretrained checkpoints are distributed separately from the source code through project releases and resources associated with the publication. Users may also build compatible datasets from their own community tables using the provided preprocessing pipeline.
-
-## Reproducibility and testing
-
-MGM2 experiments are configured through JSON files and command-line arguments. Training writes the resolved configuration, checkpoints, TensorBoard logs, and CSV logs to the selected output directory. For reproducible experiments, retain the generated configuration together with the dataset version, embedding version, checkpoint, split definition, and random seed.
-
-Run the test suite from the repository root:
-
-```bash
-python -m pytest -q
-```
-
-For a lightweight pretraining integration check, add `--fast_dev_run` to the pretraining command. Dataset and embedding validation scripts can be run independently before allocating accelerator resources.
 
 ## Citation
 
-If you use MGM2 in your research, please cite the accompanying paper; complete citation metadata will accompany the publication.
+If you use MGM2 in your research, please cite the accompanying paper. Complete citation metadata will be added with the model release.
