@@ -1,122 +1,172 @@
-# MGM2
+# MGM2: A Foundation Model for Microbial Communities
 
-MGM2 is a microbiome pretraining project built around OTU abundance modeling. The current codepath lives in [`src/`](./src) and focuses on masked abundance prediction rather than token identity reconstruction.
+MGM2 is a Transformer-based foundation model for learning representations of microbial communities from taxon abundance profiles. Each community is represented as a set of microbial features initialized with NTv3 embeddings and paired with their relative abundances. MGM2 pretraining masks the abundance channel while preserving microbial identity, encouraging the model to learn ecological context and abundance structure across communities.
 
-## What It Does
+![Overview of the MGM2 pipeline](pipeline.png)
 
-The current model uses NTv3 OTU embeddings with a Transformer backbone and supports:
+The repository contains the MGM2 model, data preprocessing and pretraining code, scale-specific configurations, downstream task workflows, and representation analysis utilities.
 
-- masked abundance-bin prediction
-- masked log-abundance regression
-- optional CLS-to-Qwen3 contrastive alignment at the sample level
+## Model overview
 
-Recent design choices in the active codepath:
+MGM2 combines pretrained microbial feature embeddings with abundance-aware Transformer encoding. A learnable community-level `[CLS]` token provides a sample representation for downstream prediction, while contextualized microbial tokens support feature-level tasks.
 
-- no legacy `presence` task
-- masking corrupts only the abundance channel and preserves OTU identity
-- `quantile` binning is performed independently within each sample
-- regression supervision is configurable with `regression_top_k_bins`
+Pretraining uses two complementary masked objectives:
 
-## Repository Layout
+1. **Masked abundance-bin classification** predicts a discretized abundance category for masked microbial features. Quantile binning can be performed independently within each sample, allowing the objective to model community-relative abundance structure.
+2. **Masked log-abundance regression** reconstructs continuous transformed abundance values. Regression supervision can be restricted to the highest abundance bins through `regression_top_k_bins`.
+
+Only the abundance signal is corrupted during masking; microbial feature identity remains available to the model. The combined objective is controlled by `loss.lambda_bin` and `loss.lambda_regression` in the JSON configuration.
+
+MGM2 also supports **optional sample-level Qwen3 alignment**. When enabled, the community `[CLS]` representation is projected into the space of sample metadata embeddings and trained with a contrastive alignment objective. Samples without a corresponding metadata embedding remain available to the abundance objectives and are excluded only from the alignment loss.
+
+## Model scales
+
+The standard MGM2 family provides four model sizes with a shared input representation and training objective:
+
+| Scale | Hidden size | Transformer layers | Attention heads | Feed-forward size |
+| --- | ---: | ---: | ---: | ---: |
+| Small | 224 | 6 | 4 | 896 |
+| Medium | 320 | 6 | 5 | 1,280 |
+| Large | 384 | 8 | 6 | 1,536 |
+| XLarge | 512 | 10 | 8 | 2,048 |
+
+Scale presets are defined in [`scripts/grid_search_pretrain_stage2.sh`](scripts/grid_search_pretrain_stage2.sh). Custom architectures can be created by changing the `model` section of an MGM2 JSON configuration.
+
+## Repository layout
 
 ```text
 MGM2/
-├── src/                         # Main implementation
-│   ├── configs/                 # Strict config definitions
-│   ├── data/                    # Dataset building, preprocessing, dataloaders
-│   ├── losses/                  # Multi-task loss definitions
-│   ├── models/                  # Backbone and prediction heads
-│   ├── training/                # Lightning module and pretraining entrypoint
-│   ├── README.md
-│   └── README_ANALYSIS.md
-├── tests/                       # Regression tests for the active codepath
-├── docs/repository_guide_zh.md  # Detailed Chinese repository guide
-├── qwen3_keywords_embedding.py  # Build sample-level Qwen3 target embeddings
-├── ntv3_embedding.py            # Build / inspect NTv3-related embeddings
-└── scripts/validate_dataset.py  # Dataset validation utility
+├── src/
+│   ├── configs/              # Typed configuration and default JSON config
+│   ├── data/                 # Dataset builders, preprocessing, and loaders
+│   ├── losses/               # Pretraining and downstream objectives
+│   ├── metrics/              # Shared evaluation metrics
+│   ├── models/               # MGM2 backbone and task-specific models
+│   ├── sae_interpretation/   # Sparse feature interpretation components
+│   └── training/             # Pretraining and downstream entry points
+├── scripts/
+│   ├── downstreams/          # Reproducible downstream workflows
+│   ├── regular_analysis/     # Embedding and fallback analyses
+│   ├── sae/                  # Sparse autoencoder workflows
+│   └── sae_interpretation/   # Feature interpretation pipeline
+├── tests/                    # Unit and regression tests
+├── pipeline.png              # Model and analysis pipeline
+└── README.md
 ```
 
-## What Is Not Included
+## Installation
 
-This public repository intentionally excludes large local artifacts and non-essential local files, including:
+MGM2 is developed in Python with PyTorch and PyTorch Lightning. Dataset preparation additionally uses NumPy, pandas, SciPy, h5py, tqdm, and `biom-format` when BIOM input is required. Create an isolated environment and install versions compatible with the CUDA and PyTorch installation on the target system.
 
-- raw data and processed datasets
-- NTv3 and Qwen3 embedding files
-- checkpoints and training outputs
-- legacy experimental code
-- local planning notes and debug-only scripts
+Run commands from the repository root so that the local `src` package is available.
 
-You need to prepare or mount these resources separately in your own environment.
+## Build a pretraining dataset
 
-## Quick Start
-
-### 1. Build a preprocessed dataset
-
-From a CSV OTU table:
+The dataset builder accepts CSV, TSV, HDF5, and BIOM community tables. It stores nonzero relative abundances and feature indices in a serialized dataset; abundance transformation and masking are applied by the training data pipeline.
 
 ```bash
-python src/data/build_dataset.py   --otu_table data/otu_table.csv   --format csv   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --top_k_otus 768   --output data/pretrain_dataset.pkl
+python src/data/build_dataset.py \
+  --otu_table data/otu_table.csv \
+  --format csv \
+  --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5 \
+  --top_k_otus 768 \
+  --output data/pretrain_dataset.pkl
 ```
 
-From a BIOM OTU table:
+Set `--top_k_otus 0` to retain all nonzero features. For community tables whose feature identifiers are not directly represented in the NTv3 vocabulary, a taxonomy-derived fallback embedding file can be supplied:
 
 ```bash
-python src/data/build_dataset.py   --otu_table data/otu_table.biom   --format biom   --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5   --top_k_otus 768   --output data/pretrain_dataset.pkl
+python src/data/build_dataset.py \
+  --otu_table data/otu_table.tsv \
+  --format tsv \
+  --ntv3_embedding ntv3_embeddings/otus_99_embeddings.h5 \
+  --fallback_embedding ntv3_embeddings/taxonomy_fallback.h5 \
+  --resolved_embedding data/resolved_embeddings.h5 \
+  --top_k_otus 768 \
+  --output data/pretrain_dataset.pkl
 ```
 
-Recommended preprocessing setting:
+Fallback embedding files can be generated with [`scripts/build_taxonomy_ntv3_fallback.py`](scripts/build_taxonomy_ntv3_fallback.py). Validate prepared resources before training with [`scripts/validate_dataset.py`](scripts/validate_dataset.py) and [`scripts/validate_ntv3_embedding.py`](scripts/validate_ntv3_embedding.py).
 
-- `--top_k_otus 768` is currently the best default starting point for this repository.
-- It truncates about 5% of samples in the analyzed MicrobeAtlas dataset, while avoiding the heavier low-abundance floor tail that appears at `1024+`.
-- If you need a more conservative setting, try `1024`; if you need a more memory-efficient setting, try `512`.
+## Pretraining
 
-### 2. Pretrain the default dual-task model
+The default configuration is [`src/configs/mgm2_default.json`](src/configs/mgm2_default.json). A standard pretraining run is launched with:
 
 ```bash
-python src/training/Pretrain.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --config src/configs/mgm2_default.json
+python src/training/Pretrain.py \
+  --data_file data/pretrain_dataset.pkl \
+  --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5 \
+  --config src/configs/mgm2_default.json \
+  --output_dir outputs_mgm2/pretrain \
+  --experiment_name mgm2_pretrain \
+  --devices 0
 ```
 
-### 3. Enable optional Qwen3 alignment during pretraining
+To enable sample-level metadata alignment, provide precomputed Qwen3 embeddings keyed by sample identifier:
 
 ```bash
-python src/training/Pretrain.py   --data_file data/pretrain_dataset.pkl   --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5   --enable_qwen3_alignment   --qwen3_embedding_path qwen3_embeddings/microbeatlas_keywords_emb.h5
+python src/training/Pretrain.py \
+  --data_file data/pretrain_dataset.pkl \
+  --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5 \
+  --config src/configs/mgm2_default.json \
+  --enable_qwen3_alignment \
+  --qwen3_embedding_path qwen3_embeddings/sample_metadata.h5 \
+  --output_dir outputs_mgm2/pretrain_qwen3 \
+  --experiment_name mgm2_pretrain_qwen3 \
+  --devices 0
 ```
 
-Pretraining runs use train/validation splits and do not run an automatic test-set evaluation.
+Sample-level Qwen3 targets can be prepared with [`qwen3_keywords_embedding.py`](qwen3_keywords_embedding.py). The alignment objective is disabled by default and can be configured through the `qwen3_alignment` section.
 
-## Core Configuration
+### Resume from a checkpoint
 
-The main config entry is [`src/configs/mgm2_default.json`](./src/configs/mgm2_default.json).
+Each run saves periodic checkpoints and `last.ckpt` under its output directory. Resume the complete optimizer and training state with `--resume`:
 
-Important abundance-related settings:
+```bash
+python src/training/Pretrain.py \
+  --data_file data/pretrain_dataset.pkl \
+  --ntv3_embedding_path ntv3_embeddings/otus_99_embeddings.h5 \
+  --config outputs_mgm2/pretrain/config.json \
+  --output_dir outputs_mgm2/pretrain \
+  --experiment_name mgm2_pretrain \
+  --devices 0 \
+  --resume outputs_mgm2/pretrain/checkpoints/last.ckpt
+```
 
-- `binning_method`: `quantile` or `fixed_threshold`
-- `regression_top_k_bins`: how many highest bins participate in regression supervision
-- `train_ratio` / `val_ratio`: pretraining split ratios that should sum to 1.0
-- `num_bins`: number of abundance bins
-- `min_abundance`, `output_min`, `output_max`: log-abundance preprocessing controls
+Use the same dataset, embedding resources, and model configuration when resuming a run.
 
-Important optional alignment settings:
+## Downstream tasks
 
-- `qwen3_alignment.enabled`
-- `qwen3_alignment.embedding_path`
-- `qwen3_alignment.projection_dim`
-- `qwen3_alignment.temperature`
-- `qwen3_alignment.loss_weight`
+MGM2 representations can be used as frozen features or fine-tuned with task-specific heads. The repository includes workflows for:
 
-## Notes on Data Semantics
+- [Microbial community classification on MGnify](scripts/downstreams/MGnify_mst/)
+- [FMT community and response prediction](scripts/downstreams/FMT/)
+- [FMT analysis on the Cell Reports cohort](scripts/downstreams/FMT_cellreports/)
+- [Drug perturbation response prediction](scripts/downstreams/drug_perturbation/)
+- [Wastewater temporal forecasting](scripts/downstreams/wastewater/)
+- [Token-level wastewater forecasting](scripts/downstreams/wastewater_v2/)
+- [Global wastewater abundance forecasting](scripts/downstreams/wastewater_global_forecast/)
 
-- dataset building stores raw relative abundance
-- training-time preprocessing applies log transformation and clipping
-- regression targets are preprocessed log-abundance values, not raw abundance
-- Qwen3-alignment samples without matching `sample_id` are kept, but excluded from alignment loss
+Sparse autoencoder training and feature interpretation workflows are available under [`scripts/sae/`](scripts/sae/) and [`scripts/sae_interpretation/`](scripts/sae_interpretation/).
 
-## Documentation
+Each downstream directory contains the data preparation, training, evaluation, or plotting entry points used for that task. Paths to datasets, embeddings, checkpoints, output directories, and accelerator devices should be adapted to the local environment before launching shell workflows.
 
-- [`src/README.md`](./src/README.md): package-level usage notes
-- [`src/README_ANALYSIS.md`](./src/README_ANALYSIS.md): implementation notes and design analysis
-- [`docs/repository_guide_zh.md`](./docs/repository_guide_zh.md): detailed Chinese guide to the full repository
+## Data and pretrained checkpoints
 
-## Verification
+Large datasets, embedding matrices, and pretrained checkpoints are distributed separately from the source code through project releases and resources associated with the publication. Users may also build compatible datasets from their own community tables using the provided preprocessing pipeline.
 
-The active codepath is covered by regression tests in [`tests/test_mgm2_regressions.py`](./tests/test_mgm2_regressions.py).
+## Reproducibility and testing
+
+MGM2 experiments are configured through JSON files and command-line arguments. Training writes the resolved configuration, checkpoints, TensorBoard logs, and CSV logs to the selected output directory. For reproducible experiments, retain the generated configuration together with the dataset version, embedding version, checkpoint, split definition, and random seed.
+
+Run the test suite from the repository root:
+
+```bash
+python -m pytest -q
+```
+
+For a lightweight pretraining integration check, add `--fast_dev_run` to the pretraining command. Dataset and embedding validation scripts can be run independently before allocating accelerator resources.
+
+## Citation
+
+If you use MGM2 in your research, please cite the accompanying paper; complete citation metadata will accompany the publication.
