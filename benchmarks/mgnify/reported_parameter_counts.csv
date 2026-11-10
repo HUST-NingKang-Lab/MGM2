@@ -1,0 +1,12 @@
+model,params_for_plot,params_without_qwen3,params_with_qwen3,params_min,params_max,source,avg_auc_l1_l5,auc_levels_used,params_for_plot_million,params_without_qwen3_million,params_with_qwen3_million
+EXPERT,18976256.0,,,18976256.0,18976256.0,"TensorFlow SavedModel variables, seed0_model/base",0.6679938178130369,5.0,18.976256,,
+DeepPhylo,10187879.8,,,10183684.0,10191217.0,mean full DeepPhylo L1-L5 model formula including frozen phy embedding,0.7023165766918852,5.0,10.1878798,,
+MGM2-small,4076352.0,4179398.0,5151846.0,4179398.0,4179398.0,Registered v2 encoder tensor count,0.7726154401530485,5.0,4.076352,4.179398,5.151846
+MGM2-medium,8096640.0,8305286.0,9723462.0,8305286.0,8305286.0,Registered v2 encoder tensor count,0.8561913831620718,5.0,8.09664,8.305286,9.723462
+MGM2-large,15083520.0,15383046.0,17108614.0,15383046.0,15383046.0,Registered v2 encoder tensor count,0.8772797759637927,5.0,15.08352,15.383046,17.108614
+MGM2-xlarge,32838656.0,33369094.0,35734022.0,33369094.0,33369094.0,Registered v2 encoder tensor count,0.9053428117978372,5.0,32.838656,33.369094,35.734022
+susagi-small,53641.0,,,,,DNA-only community-model parameters; excludes external ProkBERT taxon encoder and downstream MLP,,,0.053641,,
+susagi-large,798801.0,,,,,DNA-only community-model parameters; excludes external ProkBERT taxon encoder and downstream MLP,,,0.798801,,
+waypoint-45m,51766272.0,,,,,Unique stored backbone tensors; tied LM head counted once; excludes downstream MLP,,,51.766272,,
+waypoint-170m,181558272.0,,,,,Unique stored backbone tensors; tied LM head counted once; excludes downstream MLP,,,181.558272,,
+MGM1,8924928.0,,,,,Released general_model backbone; no downstream classification head,,,8.924928,,

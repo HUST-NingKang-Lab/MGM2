@@ -1,0 +1,110 @@
+{
+  "small": {
+    "format_version": "mgm2-five-positive-bin-v1",
+    "architecture": {
+      "hidden_size": 224,
+      "layers": 6,
+      "heads": 4,
+      "intermediate_size": 896,
+      "embedding_dim": 1536,
+      "qwen_dim": 4096,
+      "dropout": 0.1,
+      "attention_dropout": 0.1,
+      "layer_norm_eps": 1e-12
+    },
+    "scale": "small",
+    "num_bins": 5,
+    "absence_class": false,
+    "top_k_otus": 768,
+    "abundance_floor": 0.0001,
+    "reconstruction": "CLS plus static OTU identity",
+    "backbone_parameters": 4076352,
+    "best_epoch": 34,
+    "source_checkpoint_sha256": "1130289b95f3b1b45fed28ecb7fd76e6ee40c4db0607f0cf24c0f6434a5c2a7c",
+    "inactive_compatibility_heads": [
+      "token_bin",
+      "token_regression"
+    ]
+  },
+  "medium": {
+    "format_version": "mgm2-five-positive-bin-v1",
+    "architecture": {
+      "hidden_size": 320,
+      "layers": 6,
+      "heads": 5,
+      "intermediate_size": 1280,
+      "embedding_dim": 1536,
+      "qwen_dim": 4096,
+      "dropout": 0.1,
+      "attention_dropout": 0.1,
+      "layer_norm_eps": 1e-12
+    },
+    "scale": "medium",
+    "num_bins": 5,
+    "absence_class": false,
+    "top_k_otus": 768,
+    "abundance_floor": 0.0001,
+    "reconstruction": "CLS plus static OTU identity",
+    "backbone_parameters": 8096640,
+    "best_epoch": 42,
+    "source_checkpoint_sha256": "0655f38e2198a7016f9bf88cf52d4dc138f5427d68835483c27c4c300eb76a71",
+    "inactive_compatibility_heads": [
+      "token_bin",
+      "token_regression"
+    ]
+  },
+  "large": {
+    "format_version": "mgm2-five-positive-bin-v1",
+    "architecture": {
+      "hidden_size": 384,
+      "layers": 8,
+      "heads": 6,
+      "intermediate_size": 1536,
+      "embedding_dim": 1536,
+      "qwen_dim": 4096,
+      "dropout": 0.1,
+      "attention_dropout": 0.1,
+      "layer_norm_eps": 1e-12
+    },
+    "scale": "large",
+    "num_bins": 5,
+    "absence_class": false,
+    "top_k_otus": 768,
+    "abundance_floor": 0.0001,
+    "reconstruction": "CLS plus static OTU identity",
+    "backbone_parameters": 15083520,
+    "best_epoch": 26,
+    "source_checkpoint_sha256": "d4071302013217f25eb8bb873df1e3e61815b3b12ff8712b5ac5675510435c73",
+    "inactive_compatibility_heads": [
+      "token_bin",
+      "token_regression"
+    ]
+  },
+  "xlarge": {
+    "format_version": "mgm2-five-positive-bin-v1",
+    "architecture": {
+      "hidden_size": 512,
+      "layers": 10,
+      "heads": 8,
+      "intermediate_size": 2048,
+      "embedding_dim": 1536,
+      "qwen_dim": 4096,
+      "dropout": 0.1,
+      "attention_dropout": 0.1,
+      "layer_norm_eps": 1e-12
+    },
+    "scale": "xlarge",
+    "num_bins": 5,
+    "absence_class": false,
+    "top_k_otus": 768,
+    "abundance_floor": 0.0001,
+    "reconstruction": "CLS plus static OTU identity",
+    "backbone_parameters": 32838656,
+    "best_epoch": 29,
+    "source_checkpoint_sha256": "b50033f8642a32f77a17efeae175e24c8ff20b22ecfaa90b2ef3ec4eecf68324",
+    "inactive_compatibility_heads": [
+      "token_bin",
+      "token_regression"
+    ]
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "architecture": {
+    "hidden_size": 384,
+    "layers": 8,
+    "heads": 6,
+    "intermediate_size": 1536,
+    "embedding_dim": 1536,
+    "qwen_dim": 4096,
+    "dropout": 0.1,
+    "attention_dropout": 0.1,
+    "layer_norm_eps": 1e-12
+  },
+  "pretraining": {
+    "seed": 42,
+    "train_samples": 1639420,
+    "validation_samples": 181871,
+    "max_epochs": 50,
+    "early_stopping_patience": 5,
+    "batch_size": 512,
+    "learning_rate": 5e-05,
+    "weight_decay": 0.01,
+    "warmup_steps": 1000,
+    "min_lr_ratio": 0.1,
+    "mask_prob": 0.15,
+    "mask_ratio": [
+      0.8,
+      0.1,
+      0.1
+    ],
+    "regression_weight": 0.3,
+    "qwen_weight": 0.1,
+    "temperature": 0.07,
+    "clip": 1.0,
+    "precision": "bf16",
+    "steps_per_epoch": 3202,
+    "source_samples": 1821291,
+    "downstream_exclusion": false
+  },
+  "objective": {
+    "reconstruction": "S1",
+    "focal_alpha": 0.25,
+    "focal_gamma": 2,
+    "regression_bins": [
+      3,
+      4
+    ],
+    "alignment": "multi-positive symmetric contrastive"
+  }
+}

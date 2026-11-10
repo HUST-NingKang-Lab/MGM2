@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mgm2-community"
+version = "2.0.0"
+description = "Microbial General Model 2: multimodal representations of microbial community states and responses"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.2", "numpy>=1.24", "h5py>=3.8", "safetensors>=0.4"]
+keywords = ["microbiome", "foundation-model", "representation-learning", "sparse-autoencoder"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.urls]
+Homepage = "https://github.com/HUST-NingKang-Lab/MGM2"
+Repository = "https://github.com/HUST-NingKang-Lab/MGM2"
+Issues = "https://github.com/HUST-NingKang-Lab/MGM2/issues"
+Models = "https://huggingface.co/LudensZhang/MGM2"
+Preprint = "https://doi.org/10.64898/2026.07.20.739063"
+
+[project.optional-dependencies]
+hub = ["huggingface-hub>=0.24"]
+tables = ["pandas>=2"]
+test = ["pytest>=7"]
+notebook = ["pandas>=2", "matplotlib>=3.7", "jupyterlab>=4", "ipykernel>=6", "nbclient>=0.10", "nbformat>=5.9", "nbconvert>=7"]
+dev = ["pytest>=7", "build>=1.2", "twine>=5", "ruff>=0.6"]
+
+[project.scripts]
+mgm2-embed = "mgm2.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["mgm2*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]

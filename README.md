@@ -1,255 +1,275 @@
-<div align="center">
+# MGM2 as a Multimodal Foundation Model for Microbial Community States and Responses
 
-# MGM2 as a Unified Foundation Model for Microbiome World Exploration
+[![Python 3.10+](docs/assets/badges/python.svg)](#requirements)
+[![PyTorch 2.2+](docs/assets/badges/pytorch.svg)](#requirements)
+[![Hugging Face models](docs/assets/badges/huggingface.svg)](https://huggingface.co/LudensZhang/MGM2)
+[![bioRxiv preprint](docs/assets/badges/biorxiv.svg)](https://doi.org/10.64898/2026.07.20.739063)
 
-MGM2 converts taxonomic composition and relative abundance into contextualized
-microbial representations and one fixed-size community embedding.
+Microbial General Model 2 (MGM2) is a multimodal foundation model for microbial
+communities. It integrates microbial sequence identity, quantitative abundance and community descriptions
+to learn representations at both the community and organism level. Pretrained
+on a corpus of 1.82 million microbiomes, MGM2 provides a shared representation
+for studying community states, predicting responses to intervention and
+interpreting microbial features in their ecological context.
 
-<p>
-  <a href="https://huggingface.co/LudensZhang/MGM2">
-    <img alt="MGM2 on Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-MGM2-FFD21E?logo=huggingface&logoColor=000">
-  </a>
-  <img alt="Python 3.10" src="https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=fff">
-  <img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-Lightning-EE4C2C?logo=pytorch&logoColor=fff">
-</p>
+**MGM2 v2.0** trains community representations through CLS-conditioned abundance
+reconstruction and semantic alignment. See the [v2.0 release notes](docs/releases/v2.0.0.md).
 
-<p>
-  <a href="#model">Model</a> ·
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#two-input-routes">Input Routes</a> ·
-  <a href="#extract-community-embeddings">Embedding Export</a>
-</p>
+The model family spans four encoder scales, from 4M to 33M parameters, and
+represents each community with up to 768 microbial tokens. This repository
+provides community embedding, contextual OTU representations and sparse
+autoencoder inference, together with model configurations and article benchmark
+tables.
 
-</div>
+[Preprint](https://doi.org/10.64898/2026.07.20.739063) ·
+[Model guide](docs/MODEL.md) ·
+[Getting-started notebook](notebooks/01_getting_started.ipynb) ·
+[Feature atlas](https://www.mgm2atlas.com/) ·
+[Interpretation agent](https://github.com/LudensZhang/mgm2-sae-agent)
 
-<p align="center">
-  <img src="pipeline.png" alt="MGM2 model pipeline" width="920">
-</p>
+![MGM2 architecture and pretraining](docs/assets/workflow.png)
 
----
+## Contents
 
-## Model
+- [Setup](#setup)
+- [Interactive tutorial](#interactive-tutorial)
+- [Usage](#usage)
+  - [Checkpoints](#checkpoints)
+  - [Community and OTU representations](#community-and-otu-representations)
+  - [Embedding an abundance table](#embedding-an-abundance-table)
+- [Sparse features and interpretation](#sparse-features-and-interpretation)
+- [Data and pretraining](#data-and-pretraining)
+- [Benchmarks](#benchmarks)
+- [Citation](#citation)
 
-MGM2 represents every nonzero microbial feature with two complementary signals:
+## Setup
 
-| Signal | Role |
-| --- | --- |
-| **Microbial identity** | A 1,536-dimensional NTv3 representation derived from an OTU/ASV sequence or a taxonomy fallback prototype |
-| **Community abundance** | The feature's relative abundance within the sample |
+### Requirements
 
-An abundance-aware Transformer contextualizes each microbial token against the
-rest of the community. A learnable `[CLS]` token summarizes the complete sample
-as one vector that can be used directly in downstream models.
+MGM2 uses Python 3.10 or later and PyTorch 2.2 or later. The core package depends
+on NumPy, h5py and safetensors; the abundance-table interface also uses pandas.
+The examples below run on CPU. Device placement is explicit through the
+`device` argument and the CLI's `--device` option.
 
-MGM2 supports three community representations:
+### Installation
 
-| Representation | Description | Recommended use |
-| --- | --- | --- |
-| `cls` | Final hidden state of the community `[CLS]` token | **Default general-purpose embedding** |
-| `mean_pool` | Attention-mask-aware mean of contextualized microbial tokens | Token-balanced community summary |
-| `qwen3_proj` | `[CLS]` projected through the alignment head | Models that use the aligned representation |
-
-### Model family
-
-All scales use the same input and inference interface.
-
-| Model | Hidden size | Layers | Heads | Feed-forward size |
-| --- | ---: | ---: | ---: | ---: |
-| **MGM2-small** | 224 | 6 | 4 | 896 |
-| **MGM2-medium** | 320 | 6 | 5 | 1,280 |
-| **MGM2-large** | 384 | 8 | 6 | 1,536 |
-| **MGM2-xlarge** | 512 | 10 | 8 | 2,048 |
-
-> The exported `cls` and `mean_pool` dimensions equal the hidden size of the
-> selected model.
-
-## Quick Start
-
-### 1. Install MGM2
+Clone the repository, create an isolated environment and install MGM2:
 
 ```bash
 git clone https://github.com/HUST-NingKang-Lab/MGM2.git
 cd MGM2
-
-conda create -n mgm2 python=3.10
-conda activate mgm2
-pip install torch pytorch-lightning numpy pandas scipy h5py tqdm transformers biopython huggingface_hub
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install '.[tables,hub]'
+python -m pip check
+mgm2-embed --version
 ```
 
-### 2. Download the MGM2 release
-
-The complete release is available at
-[LudensZhang/MGM2](https://huggingface.co/LudensZhang/MGM2).
-
-```python
-from huggingface_hub import snapshot_download
-
-snapshot_download(
-    repo_id="LudensZhang/MGM2",
-    local_dir="MGM2-release",
-)
-```
-
-The downloaded directory contains all four model scales and shared embedding
-resources:
-
-```text
-MGM2-release/
-├── models/
-│   ├── small/       # config.json + model.ckpt
-│   ├── medium/
-│   ├── large/
-│   └── xlarge/
-└── embeddings/
-    ├── reference_ntv3_embeddings.h5
-    └── taxonomy_fallback.h5
-```
-
-### 3. Prepare a community table
-
-MGM2 accepts a feature-by-sample CSV or TSV table. The first column contains
-feature identifiers, and each remaining column is one microbial community.
-Values may be counts or abundances; each sample is converted to relative
-abundance during input preparation.
-
-```csv
-feature_id,sample_A,sample_B
-OTU_001,120,0
-OTU_002,35,82
-OTU_003,0,17
-```
-
-## Two Input Routes
-
-Choose the route that matches the information available for your microbial
-features.
-
-| | **Sequence-aware** | **Taxonomy fallback** |
-| --- | --- | --- |
-| Input identity | OTU/ASV nucleotide sequence | Species name or taxonomy path |
-| Identity encoder | [NTv3-650M](https://huggingface.co/InstaDeepAI/NTv3_650M_pre) | MGM2 taxonomy fallback |
-| Best choice when | Representative sequences are available | Only taxonomic labels are available |
-| Output | Feature-level identity HDF5 | Resolved taxonomy embedding HDF5 |
-
-### Route A: OTU or ASV sequences
-
-Download [InstaDeepAI/NTv3_650M_pre](https://huggingface.co/InstaDeepAI/NTv3_650M_pre):
-
-```python
-from huggingface_hub import snapshot_download
-
-snapshot_download(
-    repo_id="InstaDeepAI/NTv3_650M_pre",
-    local_dir="NTv3_650M_pre",
-)
-```
-
-FASTA record IDs must exactly match the feature IDs in the abundance table.
-
-```fasta
->OTU_001
-ACGT...
->OTU_002
-TGCA...
-```
-
-Encode the sequences and organize the MGM2 input:
+For development and tests:
 
 ```bash
-python ntv3_embedding.py \
-  --fasta_path communities.fasta \
-  --model_path NTv3_650M_pre \
-  --output_path community_ntv3_embeddings.h5 \
-  --gpu_ids 0
-
-python src/data/build_dataset.py \
-  --otu_table community_table.csv \
-  --format csv \
-  --ntv3_embedding community_ntv3_embeddings.h5 \
-  --top_k_otus 768 \
-  --output community_input.pkl
+python -m pip install -e '.[tables,dev]'
+python -m pytest -q
 ```
 
-### Route B: Species names
-
-Use the release fallback when representative sequences are unavailable. Feature
-IDs may be bare species names, rank-prefixed names, or full taxonomy paths:
-
-```csv
-feature_id,sample_A,sample_B
-Bacteroides fragilis,0.21,0.08
-s__Faecalibacterium prausnitzii,0.09,0.17
-g__Bifidobacterium,0.03,0.11
-```
+Download the matching model bundle, containing `models/`, `embeddings/` and
+`sae/`, and set `MODEL_ROOT`:
 
 ```bash
-python src/data/build_dataset.py \
-  --otu_table community_species.csv \
-  --format csv \
-  --ntv3_embedding MGM2-release/embeddings/reference_ntv3_embeddings.h5 \
-  --fallback_embedding MGM2-release/embeddings/taxonomy_fallback.h5 \
-  --resolved_embedding community_resolved_embeddings.h5 \
-  --top_k_otus 768 \
-  --output community_input.pkl
+python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.0.0", local_dir="../MGM2-models")'
+export MODEL_ROOT="$(cd ../MGM2-models && pwd)"
 ```
 
-Name-only matching is rank aware and accepts only unambiguous names within a
-taxonomic rank. A full rank-prefixed path is preferable when available.
+The runtime package lives in `src/mgm2`; model weights and embedding banks
+are separate Hugging Face resources. See [Installation](docs/INSTALLATION.md)
+for GPU setup, optional dependencies and resource paths, and
+[Development](docs/DEVELOPMENT.md) for repository structure and build checks.
 
-> `community_resolved_embeddings.h5` records `embedding_source` and
-> `matched_taxon_key` for every feature. The global fallback is used only when
-> no exact ID, taxonomy path, or unambiguous taxon name can be resolved.
+## Interactive tutorial
 
-## Extract Community Embeddings
-
-Both input routes produce the same `community_input.pkl` interface.
+The [getting-started notebook](notebooks/01_getting_started.ipynb) walks through
+community preprocessing, Small embeddings, contextual OTU states, a CSV/CLI
+round trip and the matched XLarge sparse autoencoder. It includes compact plots
+and exports embeddings with sample and OTU identifiers.
 
 ```bash
-python scripts/extract_community_embeddings.py \
-  --model_dir MGM2-release/models/small \
-  --data_file community_input.pkl \
-  --output community_embeddings.h5 \
-  --embedding_strategy cls \
-  --batch_size 64 \
-  --device cuda:0
+python -m pip install '.[notebook]'
+python -m ipykernel install --user --name mgm2 --display-name "Python (MGM2)"
+python -m jupyterlab notebooks/01_getting_started.ipynb
 ```
 
-Change `models/small` to `models/medium`, `models/large`, or
-`models/xlarge` to select another scale. The embedding resource path stored in
-`community_input.pkl` is used automatically.
+Select the **Python (MGM2)** kernel. The tutorial uses constructed community
+abundances over real OTU vocabulary entries and runs on CPU by default.
 
-### Output formats
+## Usage
 
-The format is selected by the output filename extension.
+### Checkpoints
 
-| Extension | Saved content |
-| --- | --- |
-| `.h5` / `.hdf5` | `embeddings`, `sample_ids`, and model provenance |
-| `.npz` | Compressed embeddings, sample IDs, and provenance arrays |
-| `.csv` | One sample per row with explicit embedding columns |
+Each scale pairs a community encoder with CLS-based abundance reconstruction
+and semantic projection heads. Checkpoints use `safetensors`, with architecture
+and source-checkpoint identity recorded in `config.json`.
+
+| Model | Encoder parameters | Hidden dimension | Layers | Model directory |
+|---|---:|---:|---:|---|
+| MGM2-Small | 4,076,352 | 224 | 6 | `models/small` |
+| MGM2-Medium | 8,096,640 | 320 | 6 | `models/medium` |
+| MGM2-Large | 15,083,520 | 384 | 8 | `models/large` |
+| MGM2-XLarge | 32,838,656 | 512 | 10 | `models/xlarge` |
+
+Parameter counts refer to the community encoder. Each checkpoint is selected
+by its full pretraining validation loss. See the [model guide](docs/MODEL.md)
+for architecture details and [migration guide](docs/MIGRATION.md) for the
+loading interface across model generations.
+
+### Community and OTU representations
+
+The following example constructs a community from three OTUs in the embedding
+bank and returns its community-level and contextual token representations.
 
 ```python
-import h5py
+import os
+from pathlib import Path
 
-with h5py.File("community_embeddings.h5", "r") as handle:
-    sample_ids = handle["sample_ids"].asstr()[:]
-    embeddings = handle["embeddings"][:]
+import torch
+from mgm2 import MGM2, EmbeddingBank, prepare_sample, collate_samples
 
-print(sample_ids.shape)
-print(embeddings.shape)
+root = Path(os.environ.get("MODEL_ROOT", "../huggingface"))
+model = MGM2.from_pretrained(root / "models/small", device="cpu")
+
+with EmbeddingBank(root / "embeddings/otus_99_embeddings.h5") as bank:
+    sample = prepare_sample(bank.ids[:3], [20, 5, 1], bank)
+
+batch = collate_samples([sample], device="cpu")
+with torch.inference_mode():
+    outputs = model(batch)
+
+print(outputs["cls"].shape)     # (1, 224): community representation
+print(outputs["hidden"].shape)  # (1, 4, 224): CLS followed by three OTUs
 ```
 
-For HDF5 output, `embeddings` has shape
-`[number_of_samples, model_hidden_size]` and follows the order in
-`sample_ids`.
+The loader enters evaluation mode. A forward pass exposes four complementary
+representations:
 
-## Acknowledgements
+| Output | Representation |
+|---|---|
+| `cls` | One learned representation per community |
+| `hidden` | Contextual states for CLS and individual OTUs |
+| `mean_pool` | Mean of valid OTU states, excluding CLS and padding |
+| `qwen` | L2-normalized community projection into the 4,096-dimensional semantic space |
 
-We sincerely thank the authors of the following open-source projects:
+### Embedding an abundance table
 
-- [NTv3](https://huggingface.co/InstaDeepAI/NTv3_650M_pre)
-- [Qwen3 Embedding](https://huggingface.co/Qwen/Qwen3-Embedding-8B)
-- [PyTorch](https://pytorch.org/)
-- [PyTorch Lightning](https://lightning.ai/docs/pytorch/stable/)
-- [Hugging Face Transformers](https://huggingface.co/docs/transformers/)
-- [Hugging Face Hub](https://huggingface.co/)
+The command-line interface reads a feature-by-sample CSV. Its first column
+contains OTU identifiers; the remaining columns contain sample counts or
+relative abundances.
+
+```bash
+mgm2-embed \
+  --model "$MODEL_ROOT/models/small" \
+  --table communities.csv \
+  --embeddings "$MODEL_ROOT/embeddings/otus_99_embeddings.h5" \
+  --output outputs/communities.npz \
+  --device cpu --batch-size 16
+```
+
+For taxonomic feature names, add
+`--fallback "$MODEL_ROOT/embeddings/otus_99_taxonomy_fallback.h5"`.
+The resolver records direct sequence matches, taxonomic matches and global
+fallbacks for every sample. For ASV identifiers, supply an HDF5 bank containing
+the corresponding NTv3 sequence embeddings.
+
+The output archive contains `sample_ids`, `cls`, `mean_pool`, `qwen`,
+feature-resolution counts, model scale and source-checkpoint SHA256.
+Load it with `numpy.load(path, allow_pickle=False)`.
+
+## Sparse features and interpretation
+
+### Sparse autoencoder
+
+The SAE maps MGM2-XLarge layer-10 OTU states into a dictionary of 4,096 sparse
+features. BatchTopK training uses an average activation budget of 64, while
+inference applies a calibrated fixed threshold. The dictionary includes a
+stored affine normalizer and its corresponding decoder.
+
+Using the community batch constructed above:
+
+```python
+from mgm2 import load_sae
+
+backbone = MGM2.from_pretrained(root / "models/xlarge", device="cpu")
+sae = load_sae(root / "sae/otu_l10_k64", device="cpu")
+
+with torch.inference_mode():
+    states = backbone(batch)["hidden"]
+    valid = (batch["input_ids"] >= 0) & batch["attention_mask"].bool()
+    features = sae.encode(states[valid])
+    reconstructed_states = sae.denormalize(sae.decode(features))
+
+print(features.shape)  # (3, 4096): one sparse feature vector per OTU
+```
+
+### Interpretation agent
+
+The [interpretation agent](https://github.com/LudensZhang/mgm2-sae-agent) connects
+sparse features to local quantitative evidence and retrieved literature. An
+interpreter develops feature descriptions, a researcher retrieves evidence on
+demand, and an independent reviewer evaluates the resulting claims. A shared
+evidence cache preserves reusable excerpts and source identifiers; structured
+views and compact handoffs reduce repeated context transfer between roles.
+
+![SAE interpretation agent](docs/assets/sae_agent_workflow.png)
+
+## Data and pretraining
+
+The pretraining corpus contains 1,821,291 microbiome communities, partitioned
+into 1,639,420 training communities and 181,871 project-disjoint validation
+communities. The model bundle includes NTv3-derived embeddings for 225,066 OTUs
+and taxonomic fallback embeddings for 5,087 groups.
+
+Each community is normalized to relative abundance before selecting up to 768
+observed OTUs. Positive abundances below 1e-4 are raised to 1e-4, then transformed
+with `clip(log10(x) + 2, -2, 2)`. The retained values preserve this scale after
+selection and flooring. Per-community quantiles define five positive-abundance
+bins, indexed 0–4.
+
+Pretraining combines masked-abundance classification, high-abundance regression
+and semantic alignment to Qwen3-Embedding-8B. The reconstruction decoder uses
+the community CLS state together with each queried OTU's static identity.
+The trained encoder produces both community-level and contextual OTU
+representations at inference. [Model details](docs/MODEL.md) describe masking,
+binning and objectives; the scale configurations are in `configs/`.
+
+## Benchmarks
+
+The article evaluates MGM2 across three predictive settings and sparse-feature
+interpretation:
+
+| Application | Evaluation | Source tables |
+|---|---|---|
+| MGnify | Hierarchical biome classification across five levels | `benchmarks/mgnify/` |
+| FMT | Post-transplant community, clinical response and recovery modelling | `benchmarks/fmt/` |
+| Drug perturbation | Drug-conditioned community changes and recovery | `benchmarks/drug/` |
+| SAE | Sparse reconstruction and evidence-based feature interpretation | `benchmarks/sae/` |
+
+![Drug perturbation workflow](docs/assets/drug_workflow.png)
+
+The [benchmark guide](benchmarks/README.md) describes the aggregate article
+tables, evaluation units and cohort definitions.
+
+## Citation
+
+The MGM2 preprint is available on bioRxiv:
+
+Zhang, H. et al. [MGM2 as a Multimodal Foundation Model for Microbial Community States and Responses](https://doi.org/10.64898/2026.07.20.739063). *bioRxiv* (2026).
+
+```bibtex
+@article{zhang2026mgm2,
+  title   = {{MGM2} as a Multimodal Foundation Model for Microbial Community States and Responses},
+  author  = {Zhang, Haohong and Zhang, Yuli and Qi, Yuxuan and Liu, Tianao and Zhao, Linfeng and Yang, Ronghua and Ning, Kang},
+  journal = {bioRxiv},
+  year    = {2026},
+  doi     = {10.64898/2026.07.20.739063},
+  url     = {https://doi.org/10.64898/2026.07.20.739063}
+}
+```

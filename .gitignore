@@ -1,53 +1,21 @@
-# Python
 __pycache__/
 *.py[cod]
-*.so
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# Environments and local tooling
+*.egg-info/
+build/
+dist/
 .venv/
-venv/
-env/
-.claude/
-
-# Large data and model artifacts
-/data/
-huggingface_upload/
-ntv3_embeddings/
-qwen3_embeddings/
+.env
+.env.*
 checkpoints/
-outputs_mgm2/
-outputs_*/
-lightning_logs/
+outputs/
+*.safetensors
 *.ckpt
+*.pt
 *.h5
-*.pkl
+*.hdf5
 *.npz
-*.npy
-
-# Legacy / exploratory / debug-only content
-legacy_code/
-examples/
-figures/
-create_pretrained_dataset.py
-quick_start_mgm2.sh
-verify_mgm2.py
-test_qwen3_embedding.py
-README_dataset.md
-MGM2.0_USAGE_GUIDE.md
-scripts/view_atlas_data.py
-scripts/view_ntv3_embedding.py
-scripts/__pycache__/
-revision_workspace/
-manuscript/
-docs/*_manuscript_summary.md
-*.orig
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Local planning artifacts
-docs/superpowers/
+*.pkl
+.ipynb_checkpoints/
+.ruff_cache/
+artifacts/

@@ -1,0 +1,28 @@
+name: Publish release notes
+on:
+  push:
+    tags:
+      - 'v2.0.0'
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the approved GitHub release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const tag = context.ref.replace('refs/tags/', '');
+            const notes = fs.readFileSync(`docs/releases/${tag}.md`, 'utf8');
+            const [title, ...body] = notes.split('\n');
+            await github.rest.repos.createRelease({
+              ...context.repo,
+              tag_name: tag,
+              name: title.replace(/^#\s+/, ''),
+              body: body.join('\n').trim(),
+              draft: false,
+              prerelease: false
+            });
