@@ -1,9 +1,19 @@
-# MGM2 as a Multimodal Foundation Model for Microbial Community States and Responses
+<h1 align="center">MGM2 as a Multimodal Foundation Model for Microbial Community States and Responses</h1>
 
-[![Python 3.10+](docs/assets/badges/python.svg)](#requirements)
-[![PyTorch 2.2+](docs/assets/badges/pytorch.svg)](#requirements)
-[![Hugging Face models](docs/assets/badges/huggingface.svg)](https://huggingface.co/LudensZhang/MGM2)
-[![bioRxiv preprint](docs/assets/badges/biorxiv.svg)](https://doi.org/10.64898/2026.07.20.739063)
+<p align="center">
+  <a href="#requirements"><img src="docs/assets/badges/python.svg" alt="Python 3.10+" height="20"></a>
+  <a href="#requirements"><img src="docs/assets/badges/pytorch.svg" alt="PyTorch 2.2+" height="20"></a>
+  <a href="https://huggingface.co/LudensZhang/MGM2"><img src="docs/assets/badges/huggingface.svg" alt="Hugging Face models" height="20"></a>
+  <a href="https://doi.org/10.64898/2026.07.20.739063"><img src="docs/assets/badges/biorxiv.svg" alt="bioRxiv preprint" height="20"></a>
+</p>
+
+<p align="center">
+  <a href="https://doi.org/10.64898/2026.07.20.739063">Preprint</a> ·
+  <a href="docs/MODEL.md">Model guide</a> ·
+  <a href="notebooks/01_getting_started.ipynb">Getting-started notebook</a> ·
+  <a href="https://www.mgm2atlas.com/">Feature atlas</a> ·
+  <a href="https://github.com/LudensZhang/mgm2-sae-agent">Interpretation agent</a>
+</p>
 
 Microbial General Model 2 (MGM2) is a multimodal foundation model for microbial
 communities. It integrates microbial sequence identity, quantitative abundance and community descriptions
@@ -21,13 +31,9 @@ provides community embedding, contextual OTU representations and sparse
 autoencoder inference, together with model configurations and article benchmark
 tables.
 
-[Preprint](https://doi.org/10.64898/2026.07.20.739063) ·
-[Model guide](docs/MODEL.md) ·
-[Getting-started notebook](notebooks/01_getting_started.ipynb) ·
-[Feature atlas](https://www.mgm2atlas.com/) ·
-[Interpretation agent](https://github.com/LudensZhang/mgm2-sae-agent)
-
-![MGM2 architecture and pretraining](docs/assets/workflow.png)
+<p align="center">
+  <img src="docs/assets/workflow.png" alt="MGM2 architecture and pretraining" width="900">
+</p>
 
 ## Contents
 
@@ -106,16 +112,20 @@ abundances over real OTU vocabulary entries and runs on CPU by default.
 
 ### Checkpoints
 
+All pretrained checkpoints and embedding resources are available on
+[Hugging Face](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.0).
+The links below point to the versioned MGM2 v2.0 release.
+
 Each scale pairs a community encoder with CLS-based abundance reconstruction
 and semantic projection heads. Checkpoints use `safetensors`, with architecture
 and source-checkpoint identity recorded in `config.json`.
 
 | Model | Encoder parameters | Hidden dimension | Layers | Model directory |
 |---|---:|---:|---:|---|
-| MGM2-Small | 4,076,352 | 224 | 6 | `models/small` |
-| MGM2-Medium | 8,096,640 | 320 | 6 | `models/medium` |
-| MGM2-Large | 15,083,520 | 384 | 8 | `models/large` |
-| MGM2-XLarge | 32,838,656 | 512 | 10 | `models/xlarge` |
+| MGM2-Small | 4,076,352 | 224 | 6 | [models/small](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.0/models/small) |
+| MGM2-Medium | 8,096,640 | 320 | 6 | [models/medium](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.0/models/medium) |
+| MGM2-Large | 15,083,520 | 384 | 8 | [models/large](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.0/models/large) |
+| MGM2-XLarge | 32,838,656 | 512 | 10 | [models/xlarge](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.0/models/xlarge) |
 
 Parameter counts refer to the community encoder. Each checkpoint is selected
 by its full pretraining validation loss. See the [model guide](docs/MODEL.md)
@@ -218,7 +228,9 @@ demand, and an independent reviewer evaluates the resulting claims. A shared
 evidence cache preserves reusable excerpts and source identifiers; structured
 views and compact handoffs reduce repeated context transfer between roles.
 
-![SAE interpretation agent](docs/assets/sae_agent_workflow.png)
+<p align="center">
+  <img src="docs/assets/sae_agent_workflow.png" alt="SAE interpretation agent" width="820">
+</p>
 
 ## Data and pretraining
 
@@ -252,7 +264,9 @@ interpretation:
 | Drug perturbation | Drug-conditioned community changes and recovery | `benchmarks/drug/` |
 | SAE | Sparse reconstruction and evidence-based feature interpretation | `benchmarks/sae/` |
 
-![Drug perturbation workflow](docs/assets/drug_workflow.png)
+<p align="center">
+  <img src="docs/assets/drug_workflow.png" alt="Drug perturbation workflow" width="860">
+</p>
 
 The [benchmark guide](benchmarks/README.md) describes the aggregate article
 tables, evaluation units and cohort definitions.
