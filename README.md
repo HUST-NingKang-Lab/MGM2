@@ -3,7 +3,7 @@
 <p align="center">
   <a href="#requirements"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10+" height="20"></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/PyTorch-2.2%2B-EE4C2C?logo=pytorch&amp;logoColor=white" alt="PyTorch 2.2+" height="20"></a>
-  <a href="https://huggingface.co/LudensZhang/MGM2"><img src="https://huggingface.co/datasets/huggingface/badges/resolve/main/model-on-hf-sm.svg" alt="Model on Hugging Face" height="20"></a>
+  <a href="https://huggingface.co/LudensZhang/MGM2"><img src="https://img.shields.io/badge/Hugging_Face-Models-FFD21E?style=flat&amp;logo=huggingface&amp;logoColor=FFD21E" alt="Hugging Face models" height="20"></a>
   <a href="https://doi.org/10.64898/2026.07.20.739063"><img src="https://img.shields.io/badge/bioRxiv-Preprint-B31B1B?logo=biorxiv&amp;logoColor=white" alt="bioRxiv preprint" height="20"></a>
 </p>
 
