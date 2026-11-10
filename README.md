@@ -1,10 +1,10 @@
 <h1 align="center">MGM2 as a Multimodal Foundation Model for Microbial Community States and Responses</h1>
 
 <p align="center">
-  <a href="#requirements"><img src="docs/assets/badges/python.svg" alt="Python 3.10+" height="20"></a>
-  <a href="#requirements"><img src="docs/assets/badges/pytorch.svg" alt="PyTorch 2.2+" height="20"></a>
-  <a href="https://huggingface.co/LudensZhang/MGM2"><img src="docs/assets/badges/huggingface.svg" alt="Hugging Face models" height="20"></a>
-  <a href="https://doi.org/10.64898/2026.07.20.739063"><img src="docs/assets/badges/biorxiv.svg" alt="bioRxiv preprint" height="20"></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10+" height="20"></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/PyTorch-2.2%2B-EE4C2C?logo=pytorch&amp;logoColor=white" alt="PyTorch 2.2+" height="20"></a>
+  <a href="https://huggingface.co/LudensZhang/MGM2"><img src="https://huggingface.co/datasets/huggingface/badges/resolve/main/model-on-hf-sm.svg" alt="Model on Hugging Face" height="20"></a>
+  <a href="https://doi.org/10.64898/2026.07.20.739063"><img src="https://img.shields.io/badge/bioRxiv-Preprint-B31B1B?logo=biorxiv&amp;logoColor=white" alt="bioRxiv preprint" height="20"></a>
 </p>
 
 <p align="center">
@@ -24,6 +24,9 @@ interpreting microbial features in their ecological context.
 
 **MGM2 v2.0** trains community representations through CLS-conditioned abundance
 reconstruction and semantic alignment. See the [v2.0 release notes](docs/releases/v2.0.0.md).
+
+**Latest release: v2.0.1** — modular inference, a streamlined package layout
+and reusable table workflows. See the [release notes](docs/releases/v2.0.1.md).
 
 The model family spans four encoder scales, from 4M to 33M parameters, and
 represents each community with up to 768 microbial tokens. This repository
@@ -83,11 +86,12 @@ Download the matching model bundle, containing `models/`, `embeddings/` and
 `sae/`, and set `MODEL_ROOT`:
 
 ```bash
-python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.0.0", local_dir="../MGM2-models")'
+python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.0.1", local_dir="../MGM2-models")'
 export MODEL_ROOT="$(cd ../MGM2-models && pwd)"
 ```
 
-The runtime package lives in `src/mgm2`; model weights and embedding banks
+The runtime package lives in `mgm2/`, organized into `models`, `data`,
+`inference`, `interpretability` and `training`; model weights and embedding banks
 are separate Hugging Face resources. See [Installation](docs/INSTALLATION.md)
 for GPU setup, optional dependencies and resource paths, and
 [Development](docs/DEVELOPMENT.md) for repository structure and build checks.
@@ -113,7 +117,7 @@ abundances over real OTU vocabulary entries and runs on CPU by default.
 ### Checkpoints
 
 All pretrained checkpoints and embedding resources are available on
-[Hugging Face](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.0).
+[Hugging Face](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.1).
 The links below point to the versioned MGM2 v2.0 release.
 
 Each scale pairs a community encoder with CLS-based abundance reconstruction
@@ -122,10 +126,10 @@ and source-checkpoint identity recorded in `config.json`.
 
 | Model | Encoder parameters | Hidden dimension | Layers | Model directory |
 |---|---:|---:|---:|---|
-| MGM2-Small | 4,076,352 | 224 | 6 | [models/small](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.0/models/small) |
-| MGM2-Medium | 8,096,640 | 320 | 6 | [models/medium](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.0/models/medium) |
-| MGM2-Large | 15,083,520 | 384 | 8 | [models/large](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.0/models/large) |
-| MGM2-XLarge | 32,838,656 | 512 | 10 | [models/xlarge](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.0/models/xlarge) |
+| MGM2-Small | 4,076,352 | 224 | 6 | [models/small](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.1/models/small) |
+| MGM2-Medium | 8,096,640 | 320 | 6 | [models/medium](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.1/models/medium) |
+| MGM2-Large | 15,083,520 | 384 | 8 | [models/large](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.1/models/large) |
+| MGM2-XLarge | 32,838,656 | 512 | 10 | [models/xlarge](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.1/models/xlarge) |
 
 Parameter counts refer to the community encoder. Each checkpoint is selected
 by its full pretraining validation loss. See the [model guide](docs/MODEL.md)
@@ -169,6 +173,10 @@ representations:
 | `qwen` | L2-normalized community projection into the 4,096-dimensional semantic space |
 
 ### Embedding an abundance table
+
+The CLI and the reusable `mgm2.inference` Python API share one inference
+pipeline. See the [table inference guide](docs/INFERENCE.md) to reuse a loaded
+model across multiple tables and inspect output provenance.
 
 The command-line interface reads a feature-by-sample CSV. Its first column
 contains OTU identifiers; the remaining columns contain sample counts or

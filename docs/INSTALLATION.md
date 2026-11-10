@@ -46,7 +46,7 @@ as the command-line interface.
 Download the model bundle accompanying this code release:
 
 ```bash
-python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.0.0", local_dir="../MGM2-models")'
+python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.0.1", local_dir="../MGM2-models")'
 export MODEL_ROOT="$(cd ../MGM2-models && pwd)"
 ```
 
@@ -80,11 +80,12 @@ NTv3 embedding bank; the supplied bank contains the release OTU vocabulary.
 ```bash
 python -m pip install -e '.[tables,notebook,dev]'
 python -m pytest
-python -m ruff check src tests examples
+python -m ruff check mgm2 tests examples
+python -m ruff format --check mgm2 tests examples
 python -m build
 python -m twine check dist/*
 ```
 
-The editable installation exposes `src/mgm2`; ordinary installation uses a
+The editable installation exposes the root-level `mgm2/` package; ordinary installation uses a
 built wheel. See [development and release checks](DEVELOPMENT.md) for artifact
 testing and package publication.

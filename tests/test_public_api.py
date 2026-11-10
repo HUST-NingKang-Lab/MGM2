@@ -1,11 +1,13 @@
 import tempfile
 import unittest
 from pathlib import Path
+
 import h5py
 import numpy as np
 import torch
-from mgm2 import EmbeddingBank, prepare_sample, collate_samples
-from mgm2._research_model import corrupt_abundance, reconstruction_sums, alignment_loss
+
+from mgm2 import EmbeddingBank, collate_samples, prepare_sample
+from mgm2._research_model import alignment_loss, corrupt_abundance, reconstruction_sums
 from mgm2._sae import BatchTopKSAE
 
 
@@ -23,12 +25,12 @@ class InputTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_floor_is_not_renormalized(self):
-        s = prepare_sample(["a", "b", "c"], [1e-7, .0099999, .99], self.bank)
-        self.assertEqual(s["abundance_values"][0], -2.)
-        np.testing.assert_allclose(s["abundance_values"][2], np.log10(.99) + 2, atol=1e-6)
+        s = prepare_sample(["a", "b", "c"], [1e-7, 0.0099999, 0.99], self.bank)
+        self.assertEqual(s["abundance_values"][0], -2.0)
+        np.testing.assert_allclose(s["abundance_values"][2], np.log10(0.99) + 2, atol=1e-6)
 
     def test_zeros_omitted_and_bin0_retained(self):
-        s = prepare_sample(["a", "b", "c", "d", "e"], [0, .001, .01, .1, .889], self.bank)
+        s = prepare_sample(["a", "b", "c", "d", "e"], [0, 0.001, 0.01, 0.1, 0.889], self.bank)
         self.assertNotIn("a", s["feature_ids"])
         self.assertEqual(s["bins"].min(), 0)
         batch = collate_samples([s, prepare_sample(["a"], [1], self.bank)])
@@ -43,7 +45,7 @@ class InputTests(unittest.TestCase):
     def test_topk_before_floor(self):
         s = prepare_sample(["a", "b", "c"], [1, 2, 7], self.bank, top_k=2)
         self.assertEqual(s["feature_ids"], ["c", "b"])
-        np.testing.assert_allclose(s["abundance_values"], np.log10([.7, .2]) + 2, atol=1e-6)
+        np.testing.assert_allclose(s["abundance_values"], np.log10([0.7, 0.2]) + 2, atol=1e-6)
 
     def test_invalid_and_unknown_inputs_raise(self):
         for x in ([0, 0], [-1, 1], [float("nan"), 1], [float("inf"), 1]):
@@ -67,7 +69,7 @@ class InputTests(unittest.TestCase):
         with EmbeddingBank(self.path, path) as bank:
             vectors, source = bank.resolve(["a", "g__Bacteroides", "unknown"])
             self.assertEqual(source, ["ntv3", "fallback:genus", "fallback:global"])
-            np.testing.assert_array_equal(vectors[1:], [[1]*4, [2]*4])
+            np.testing.assert_array_equal(vectors[1:], [[1] * 4, [2] * 4])
 
 
 class ObjectiveTests(unittest.TestCase):
@@ -81,7 +83,7 @@ class ObjectiveTests(unittest.TestCase):
         self.assertTrue((prediction.grad[3:].abs() > 0).all())
 
     def test_mask_only_valid_otus_and_reproducible(self):
-        y = torch.tensor([[0., -2., -.5, 0.]])
+        y = torch.tensor([[0.0, -2.0, -0.5, 0.0]])
         valid = torch.tensor([[False, True, True, False]])
         a, sel = corrupt_abundance(y, valid, seed=7)
         b, other = corrupt_abundance(y, valid, seed=7)
@@ -103,7 +105,7 @@ class ObjectiveTests(unittest.TestCase):
         model = BatchTopKSAE(4, 16, 3).eval()
         with self.assertRaises(RuntimeError):
             model.encode(torch.ones(1, 4))
-        model.threshold.fill_(.2)
+        model.threshold.fill_(0.2)
         x = torch.randn(5, 4)
         torch.testing.assert_close(model.encode(x), torch.cat([model.encode(v[None]) for v in x]))
         torch.testing.assert_close(model.denormalize(model.normalize(x)), x)

@@ -1,6 +1,8 @@
+from typing import Optional, Tuple
+
 import torch
 import torch.nn as nn
-from typing import Optional, Tuple
+
 
 class BaseModel(nn.Module):
     """
@@ -11,18 +13,18 @@ class BaseModel(nn.Module):
 
     def __init__(
         self,
-        vocab_size: int = 10000,        # 虽然不直接使用，但保留以兼容tokenizer
-        embedding_dim: int = 1536,      # NTv3 embedding维度
-        hidden_size: int = 512,         # Transformer隐藏层维度
-        num_hidden_layers: int = 12,    # Transformer层数
-        num_attention_heads: int = 8,   # 注意力头数
+        vocab_size: int = 10000,  # 虽然不直接使用，但保留以兼容tokenizer
+        embedding_dim: int = 1536,  # NTv3 embedding维度
+        hidden_size: int = 512,  # Transformer隐藏层维度
+        num_hidden_layers: int = 12,  # Transformer层数
+        num_attention_heads: int = 8,  # 注意力头数
         intermediate_size: int = 2048,  # Feed-forward维度
         hidden_dropout_prob: float = 0.1,
         attention_probs_dropout_prob: float = 0.1,
         layer_norm_eps: float = 1e-12,
         max_position_embeddings: int = 2048,
-        pad_token_id: int = -1,         # padding token id
-        cls_token_id: int = -1,         # CLS token id
+        pad_token_id: int = -1,  # padding token id
+        cls_token_id: int = -1,  # CLS token id
         output_hidden_states: bool = False,
         output_attentions: bool = False,
     ):
@@ -66,9 +68,9 @@ class BaseModel(nn.Module):
             nhead=num_attention_heads,
             dim_feedforward=intermediate_size,
             dropout=hidden_dropout_prob,
-            activation='gelu',
+            activation="gelu",
             batch_first=True,
-            norm_first=True  # Pre-LN结构，更稳定
+            norm_first=True,  # Pre-LN结构，更稳定
         )
         self.encoder = nn.TransformerEncoder(
             encoder_layer,
@@ -82,11 +84,11 @@ class BaseModel(nn.Module):
         """初始化权重"""
         for module in self.modules():
             if isinstance(module, nn.Linear):
-                module.weight.data.normal_(mean=0.0, std=self.hidden_size ** -0.5)
+                module.weight.data.normal_(mean=0.0, std=self.hidden_size**-0.5)
                 if module.bias is not None:
                     module.bias.data.zero_()
             elif isinstance(module, nn.Embedding):
-                module.weight.data.normal_(mean=0.0, std=self.hidden_size ** -0.5)
+                module.weight.data.normal_(mean=0.0, std=self.hidden_size**-0.5)
 
     def get_input_embeddings(self):
         """获取输入embeddings（用于微调时更新）"""
@@ -98,9 +100,9 @@ class BaseModel(nn.Module):
 
     def forward(
         self,
-        input_ids: torch.Tensor,            # [batch_size, seq_len] 用于区分特殊token
-        embeddings: torch.Tensor,           # [batch_size, seq_len, embedding_dim]
-        abundance_values: torch.Tensor,           # [batch_size, seq_len]
+        input_ids: torch.Tensor,  # [batch_size, seq_len] 用于区分特殊token
+        embeddings: torch.Tensor,  # [batch_size, seq_len, embedding_dim]
+        abundance_values: torch.Tensor,  # [batch_size, seq_len]
         attention_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
         head_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
@@ -125,8 +127,6 @@ class BaseModel(nn.Module):
         output_attentions = self.output_attentions
         batch_size, seq_len, _ = embeddings.size()
 
-        device = embeddings.device
-
         # Project OTU identity, then let abundance condition it through FiLM.
         base_hidden = self.embedding_projection(embeddings)
         abundances_expanded = abundance_values.unsqueeze(-1)  # [batch_size, seq_len, 1]
@@ -135,9 +135,11 @@ class BaseModel(nn.Module):
         hidden_states = base_hidden * (1.0 + gamma) + beta
 
         # 替换 CLS token 的特征
-        cls_positions = (input_ids == self.cls_token_id)
+        cls_positions = input_ids == self.cls_token_id
         if cls_positions.any():
-            cls_embs = self.cls_embedding(torch.zeros_like(input_ids[cls_positions], dtype=torch.long))
+            cls_embs = self.cls_embedding(
+                torch.zeros_like(input_ids[cls_positions], dtype=torch.long)
+            )
             hidden_states[cls_positions] = cls_embs.to(dtype=hidden_states.dtype)
 
         # Layer Norm
@@ -168,9 +170,11 @@ class BaseModel(nn.Module):
 
         if return_dict:
             return {
-                'last_hidden_state': hidden_states,
-                'hidden_states': all_hidden_states,
-                'attentions': all_attentions,
+                "last_hidden_state": hidden_states,
+                "hidden_states": all_hidden_states,
+                "attentions": all_attentions,
             }
         else:
-            return tuple(v for v in [hidden_states, all_hidden_states, all_attentions] if v is not None)
+            return tuple(
+                v for v in [hidden_states, all_hidden_states, all_attentions] if v is not None
+            )

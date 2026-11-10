@@ -1,7 +1,9 @@
 """Formal BatchTopK SAE with calibrated inference threshold."""
+
 import torch
 from torch import nn
 from torch.nn import functional as F
+
 
 class BatchTopKSAE(nn.Module):
     """Batch budget in training; a frozen scalar threshold in all inference.
@@ -9,6 +11,7 @@ class BatchTopKSAE(nn.Module):
     Unlike the historical SAE, the encoder has its own bias. A discovery-only
     affine normalizer is stored in the checkpoint, preserving relative norms.
     """
+
     def __init__(self, dimension, width, k):
         super().__init__()
         self.dimension, self.width, self.k = dimension, width, k
@@ -31,7 +34,9 @@ class BatchTopKSAE(nn.Module):
         return F.relu((normalized - self.decoder_bias) @ self.encoder + self.encoder_bias)
 
     def batch_gate(self, dense):
-        values, indices = dense.flatten().topk(min(self.k * len(dense), dense.numel()), sorted=False)
+        values, indices = dense.flatten().topk(
+            min(self.k * len(dense), dense.numel()), sorted=False
+        )
         return torch.zeros_like(dense).flatten().scatter(0, indices, values).view_as(dense)
 
     def encode(self, x, normalized=False):
@@ -66,16 +71,25 @@ class BatchTopKSAE(nn.Module):
     def constrain_decoder(self, project_gradient=False):
         self.decoder.copy_(F.normalize(self.decoder, dim=1))
         if project_gradient and self.decoder.grad is not None:
-            self.decoder.grad -= (self.decoder.grad * self.decoder).sum(1, keepdim=True) * self.decoder
+            self.decoder.grad -= (self.decoder.grad * self.decoder).sum(
+                1, keepdim=True
+            ) * self.decoder
 
     @torch.no_grad()
     def calibrate(self, normalized_data, batches, batch_size, seed):
         generator = torch.Generator(device=normalized_data.device).manual_seed(seed)
         cutoffs = []
         for _ in range(batches):
-            ix = torch.randint(len(normalized_data), (batch_size,), generator=generator, device=normalized_data.device)
+            ix = torch.randint(
+                len(normalized_data),
+                (batch_size,),
+                generator=generator,
+                device=normalized_data.device,
+            )
             dense = self.dense(normalized_data[ix])
-            selected = dense.flatten().topk(min(self.k * batch_size, dense.numel()), sorted=False).values
+            selected = (
+                dense.flatten().topk(min(self.k * batch_size, dense.numel()), sorted=False).values
+            )
             positive = selected[selected > 0]
             cutoffs.append(positive.min() if positive.numel() else dense.new_zeros(()))
         self.threshold.copy_(torch.stack(cutoffs).mean())

@@ -3,6 +3,7 @@ on:
   push:
     tags:
       - 'v2.0.0'
+      - 'v2.0.1'
 permissions:
   contents: write
 jobs:

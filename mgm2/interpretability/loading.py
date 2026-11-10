@@ -1,8 +1,11 @@
 """Frozen layer-10 OTU dictionary; use contextual XLarge OTUs, not CLS."""
+
 import json
 from pathlib import Path
+
 from safetensors.torch import load_file
-from ._sae import BatchTopKSAE
+
+from .dictionary import BatchTopKSAE
 
 
 def load_sae(directory, device="cpu"):

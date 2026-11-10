@@ -1,7 +1,9 @@
 """Verified reconstruction and text-alignment heads."""
+
 import torch
 from torch import nn
 from torch.nn import functional as F
+
 
 class AbundanceBinHead(nn.Module):
     """Head for abundance bin classification."""
@@ -31,6 +33,7 @@ class AbundanceBinHead(nn.Module):
         x = self.dropout(x)
         return self.decoder(x)
 
+
 class RegressionHead(nn.Module):
     """Head for continuous abundance regression in log-abundance space."""
 
@@ -57,6 +60,7 @@ class RegressionHead(nn.Module):
         x = self.layer_norm(x)
         x = self.dropout(x)
         return self.decoder(x).squeeze(-1)
+
 
 class Qwen3AlignmentHead(nn.Module):
     """Projection head for aligning CLS states to Qwen3 embedding space."""

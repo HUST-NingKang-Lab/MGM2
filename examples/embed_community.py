@@ -1,4 +1,5 @@
 """Embed a constructed community using three entries from the release vocabulary."""
+
 import argparse
 import json
 
@@ -9,6 +10,7 @@ from mgm2 import MGM2, EmbeddingBank, collate_samples, prepare_sample
 
 def main():
     from pathlib import Path
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-root", type=Path, required=True)
     parser.add_argument("--scale", choices=["small", "medium", "large", "xlarge"], default="small")
