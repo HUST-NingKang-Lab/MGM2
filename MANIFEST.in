@@ -1,4 +1,4 @@
-include README.md pyproject.toml MANIFEST.in
+include README.md LICENSE pyproject.toml MANIFEST.in
 recursive-include mgm2 *.py
 recursive-include tests *.py
 recursive-include docs *.md

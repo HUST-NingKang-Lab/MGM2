@@ -1,12 +1,14 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mgm2-community"
 version = "2.1.0"
 description = "Microbial General Model 2: multimodal representations of microbial community states and responses"
-readme = "README.md"
+readme = "docs/PYPI.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["torch>=2.2", "numpy>=1.24", "h5py>=3.8", "safetensors>=0.4"]
 keywords = ["microbiome", "foundation-model", "representation-learning", "sparse-autoencoder"]

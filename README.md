@@ -1,6 +1,8 @@
 <h1 align="center">MGM2 as a Multimodal Foundation Model for Microbial Community States and Responses</h1>
 
 <p align="center">
+  <a href="https://pypi.org/project/mgm2-community/"><img src="https://img.shields.io/pypi/v/mgm2-community?style=flat" alt="PyPI version" height="20"></a>
+  <a href="https://pepy.tech/project/mgm2-community"><img src="https://img.shields.io/pepy/dt/mgm2-community?style=flat&amp;label=downloads" alt="PyPI downloads" height="20"></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10+" height="20"></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/PyTorch-2.2%2B-EE4C2C?logo=pytorch&amp;logoColor=white" alt="PyTorch 2.2+" height="20"></a>
   <a href="https://huggingface.co/LudensZhang/MGM2"><img src="https://img.shields.io/badge/Hugging_Face-Models-FFD21E?style=flat&amp;logo=huggingface&amp;logoColor=FFD21E" alt="Hugging Face models" height="20"></a>
@@ -53,6 +55,7 @@ tables.
 - [Data and pretraining](#data-and-pretraining)
 - [Benchmarks](#benchmarks)
 - [Contributing](#contributing)
+- [License](#license)
 - [Acknowledgements](#acknowledgements)
 - [Citation](#citation)
 
@@ -68,7 +71,13 @@ a CUDA device. Device placement is explicit through the
 
 ### Installation
 
-Clone the repository, create an isolated environment and install MGM2:
+Install from [PyPI](https://pypi.org/project/mgm2-community/):
+
+```bash
+python -m pip install 'mgm2-community[tables,hub]'
+```
+
+Or install from source in an isolated environment:
 
 ```bash
 git clone https://github.com/HUST-NingKang-Lab/MGM2.git
@@ -317,6 +326,11 @@ tables, evaluation units and cohort definitions.
 Questions, bug reports and contributions are welcome through
 [GitHub Issues](https://github.com/HUST-NingKang-Lab/MGM2/issues) and pull requests.
 See the [development guide](docs/DEVELOPMENT.md) to get started.
+
+## License
+
+MGM2 code is released under the [MIT License](LICENSE). Model weights and
+third-party resources retain their respective terms.
 
 ## Acknowledgements
 

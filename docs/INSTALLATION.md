@@ -19,6 +19,16 @@ For GPU inference, install the PyTorch build matching your platform using the
 [official PyTorch installation selector](https://pytorch.org/get-started/locally/)
 before installing MGM2. Device selection remains explicit in the API and CLI.
 
+## Install from PyPI
+
+```bash
+python -m pip install 'mgm2-community[tables,hub]==2.1.0'
+mgm2-embed --version
+```
+
+For user-sequence encoding, install `mgm2-community[ntv3]`. Model weights remain
+separate downloads from Hugging Face.
+
 ## Install from the source checkout
 
 Run these commands in the directory containing `pyproject.toml`:

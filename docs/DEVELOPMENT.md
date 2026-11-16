@@ -86,11 +86,14 @@ constructed abundances over real vocabulary entries; they illustrate the API.
    source revision and build artifacts to GitHub.
 4. Publish matching model resources to Hugging Face when they change and record
    the model revision independently from the code revision.
+5. Upload the checked wheel and source distribution to PyPI, then verify an
+   installation from the public index. Published versions are immutable.
 
-Distribution currently uses GitHub and Hugging Face. Package-check CI validates
-artifacts without publishing to PyPI. The runtime package and model bundle have
-independent release artifacts, joined by the model configuration format and
-checkpoint identifiers. Documentation and internal refactors leave the model
-release tag unchanged.
+PyPI distributes `mgm2-community`; GitHub hosts source and documentation, and
+Hugging Face hosts model resources. Package-check CI validates artifacts;
+publication is a separate maintainer action. `docs/PYPI.md` supplies the package
+description with absolute links and hosted artwork. Model and code artifacts
+have independent versions. Documentation updates leave existing release tags
+unchanged.
 
 Reference: [Python packaging tutorial](https://packaging.python.org/en/latest/tutorials/packaging-projects/).
