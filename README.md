@@ -9,8 +9,9 @@
 
 <p align="center">
   <a href="https://doi.org/10.64898/2026.07.20.739063">Preprint</a> ·
+  <a href="#checkpoints">Pretrained models</a> ·
   <a href="docs/MODEL.md">Model guide</a> ·
-  <a href="notebooks/01_getting_started.ipynb">Getting-started notebook</a> ·
+  <a href="#tutorials">Tutorials</a> ·
   <a href="https://www.mgm2atlas.com/">Feature atlas</a> ·
   <a href="https://github.com/LudensZhang/mgm2-sae-agent">Interpretation agent</a>
 </p>
@@ -25,8 +26,8 @@ interpreting microbial features in their ecological context.
 **MGM2 v2.0** trains community representations through CLS-conditioned abundance
 reconstruction and semantic alignment. See the [v2.0 release notes](docs/releases/v2.0.0.md).
 
-**Latest release: v2.0.1** — modular inference, a streamlined package layout
-and reusable table workflows. See the [release notes](docs/releases/v2.0.1.md).
+**Latest release: v2.1.0** — encode your own microbial sequences with legacy
+NTv3 and use them directly in MGM2. See the [release notes](docs/releases/v2.1.0.md).
 
 The model family spans four encoder scales, from 4M to 33M parameters, and
 represents each community with up to 768 microbial tokens. This repository
@@ -41,14 +42,18 @@ tables.
 ## Contents
 
 - [Setup](#setup)
-- [Interactive tutorial](#interactive-tutorial)
+- [Checkpoints](#checkpoints)
+- [Tutorials](#tutorials)
 - [Usage](#usage)
-  - [Checkpoints](#checkpoints)
+  - [Choose an input route](#choose-an-input-route)
   - [Community and OTU representations](#community-and-otu-representations)
   - [Embedding an abundance table](#embedding-an-abundance-table)
+  - [Encoding your own sequences](#encoding-your-own-sequences)
 - [Sparse features and interpretation](#sparse-features-and-interpretation)
 - [Data and pretraining](#data-and-pretraining)
 - [Benchmarks](#benchmarks)
+- [Contributing](#contributing)
+- [Acknowledgements](#acknowledgements)
 - [Citation](#citation)
 
 ## Setup
@@ -57,7 +62,8 @@ tables.
 
 MGM2 uses Python 3.10 or later and PyTorch 2.2 or later. The core package depends
 on NumPy, h5py and safetensors; the abundance-table interface also uses pandas.
-The examples below run on CPU. Device placement is explicit through the
+Community inference examples run on CPU; the sequence-encoding example uses
+a CUDA device. Device placement is explicit through the
 `device` argument and the CLI's `--device` option.
 
 ### Installation
@@ -86,22 +92,35 @@ Download the matching model bundle, containing `models/`, `embeddings/` and
 `sae/`, and set `MODEL_ROOT`:
 
 ```bash
-python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.0.1", local_dir="../MGM2-models")'
+python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.1.0", local_dir="../MGM2-models")'
 export MODEL_ROOT="$(cd ../MGM2-models && pwd)"
 ```
 
-The runtime package lives in `mgm2/`, organized into `models`, `data`,
-`inference`, `interpretability` and `training`; model weights and embedding banks
-are separate Hugging Face resources. See [Installation](docs/INSTALLATION.md)
-for GPU setup, optional dependencies and resource paths, and
-[Development](docs/DEVELOPMENT.md) for repository structure and build checks.
+See [Installation](docs/INSTALLATION.md) for GPU setup and optional dependencies,
+and [Development](docs/DEVELOPMENT.md) for package structure and tests.
 
-## Interactive tutorial
+## Checkpoints
 
-The [getting-started notebook](notebooks/01_getting_started.ipynb) walks through
-community preprocessing, Small embeddings, contextual OTU states, a CSV/CLI
-round trip and the matched XLarge sparse autoencoder. It includes compact plots
-and exports embeddings with sample and OTU identifiers.
+All pretrained checkpoints and embedding resources are available on
+[Hugging Face](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.0).
+
+| Model | Encoder parameters | Hidden dimension | Layers | Model directory |
+|---|---:|---:|---:|---|
+| MGM2-Small | 4,076,352 | 224 | 6 | [models/small](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.0/models/small) |
+| MGM2-Medium | 8,096,640 | 320 | 6 | [models/medium](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.0/models/medium) |
+| MGM2-Large | 15,083,520 | 384 | 8 | [models/large](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.0/models/large) |
+| MGM2-XLarge | 32,838,656 | 512 | 10 | [models/xlarge](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.0/models/xlarge) |
+
+Parameter counts refer to the community encoder. See the
+[model guide](docs/MODEL.md) for architecture details and the
+[migration guide](docs/MIGRATION.md) for loading earlier models.
+
+## Tutorials
+
+| Tutorial | What you will learn |
+|---|---|
+| [Getting started](notebooks/01_getting_started.ipynb) | Community embeddings, contextual OTU states and SAE features |
+| [Encode your own sequences](notebooks/02_sequence_encoding.ipynb) | FASTA to legacy NTv3 embeddings |
 
 ```bash
 python -m pip install '.[notebook]'
@@ -109,32 +128,19 @@ python -m ipykernel install --user --name mgm2 --display-name "Python (MGM2)"
 python -m jupyterlab notebooks/01_getting_started.ipynb
 ```
 
-Select the **Python (MGM2)** kernel. The tutorial uses constructed community
-abundances over real OTU vocabulary entries and runs on CPU by default.
+Select the **Python (MGM2)** kernel. For sequence encoding, also install `.[ntv3]`.
 
 ## Usage
 
-### Checkpoints
+### Choose an input route
 
-All pretrained checkpoints and embedding resources are available on
-[Hugging Face](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.1).
-The links below point to the versioned MGM2 v2.0 release.
+Both routes combine microbial identity with a feature-by-sample abundance
+table and produce the same MGM2 representations.
 
-Each scale pairs a community encoder with CLS-based abundance reconstruction
-and semantic projection heads. Checkpoints use `safetensors`, with architecture
-and source-checkpoint identity recorded in `config.json`.
-
-| Model | Encoder parameters | Hidden dimension | Layers | Model directory |
-|---|---:|---:|---:|---|
-| MGM2-Small | 4,076,352 | 224 | 6 | [models/small](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.1/models/small) |
-| MGM2-Medium | 8,096,640 | 320 | 6 | [models/medium](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.1/models/medium) |
-| MGM2-Large | 15,083,520 | 384 | 8 | [models/large](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.1/models/large) |
-| MGM2-XLarge | 32,838,656 | 512 | 10 | [models/xlarge](https://huggingface.co/LudensZhang/MGM2/tree/v2.0.1/models/xlarge) |
-
-Parameter counts refer to the community encoder. Each checkpoint is selected
-by its full pretraining validation loss. See the [model guide](docs/MODEL.md)
-for architecture details and [migration guide](docs/MIGRATION.md) for the
-loading interface across model generations.
+| Your input | Identity resource | Start here |
+|---|---|---|
+| Representative OTU or ASV sequences | Encode FASTA with legacy NTv3 to build your own embedding bank | [Sequence encoding](#encoding-your-own-sequences) |
+| IDs in the released OTU vocabulary, or taxonomic names | Use the supplied OTU bank; enable taxonomy fallback for name-based matching | [Abundance-table inference](#embedding-an-abundance-table) |
 
 ### Community and OTU representations
 
@@ -200,6 +206,33 @@ the corresponding NTv3 sequence embeddings.
 The output archive contains `sample_ids`, `cls`, `mean_pool`, `qwen`,
 feature-resolution counts, model scale and source-checkpoint SHA256.
 Load it with `numpy.load(path, allow_pickle=False)`.
+
+### Encoding your own sequences
+
+For ASVs with representative DNA sequences, build a sequence embedding bank
+directly from FASTA, then use the same community inference pipeline:
+
+```bash
+python -m pip install '.[ntv3,tables]'
+mgm2-encode-fasta \
+  --fasta representative_sequences.fasta \
+  --output outputs/asv_ntv3.h5 \
+  --device cuda:0 --trust-remote-code
+
+mgm2-embed \
+  --model "$MODEL_ROOT/models/small" \
+  --table communities.csv \
+  --embeddings outputs/asv_ntv3.h5 \
+  --output outputs/communities.npz --device cuda:0
+```
+
+FASTA record IDs must match the abundance table's feature IDs. This route uses
+the **legacy [NTv3_650M_pre](https://huggingface.co/InstaDeepAI/NTv3_650M_pre)**,
+with pinned weight and custom-code revisions. Request access to the legacy
+model and its linked code repository on Hugging Face and authenticate before
+the first run. The revised `NTv3_pretrained` is a different encoder.
+See the [sequence encoding guide](docs/SEQUENCES.md) for local checkpoints,
+pooling, batching and provenance.
 
 ## Sparse features and interpretation
 
@@ -278,6 +311,22 @@ interpretation:
 
 The [benchmark guide](benchmarks/README.md) describes the aggregate article
 tables, evaluation units and cohort definitions.
+
+## Contributing
+
+Questions, bug reports and contributions are welcome through
+[GitHub Issues](https://github.com/HUST-NingKang-Lab/MGM2/issues) and pull requests.
+See the [development guide](docs/DEVELOPMENT.md) to get started.
+
+## Acknowledgements
+
+We thank the authors and maintainers of the projects used in MGM2:
+
+- [NTv3](https://huggingface.co/InstaDeepAI/NTv3_650M_pre)
+- [Qwen3 Embedding](https://huggingface.co/Qwen/Qwen3-Embedding-8B)
+- [PyTorch](https://pytorch.org/)
+- [Hugging Face Transformers](https://huggingface.co/docs/transformers/)
+- [Hugging Face Hub](https://huggingface.co/)
 
 ## Citation
 

@@ -46,7 +46,7 @@ as the command-line interface.
 Download the model bundle accompanying this code release:
 
 ```bash
-python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.0.1", local_dir="../MGM2-models")'
+python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.1.0", local_dir="../MGM2-models")'
 export MODEL_ROOT="$(cd ../MGM2-models && pwd)"
 ```
 
@@ -71,11 +71,17 @@ NTv3 embedding bank; the supplied bank contains the release OTU vocabulary.
 |---|---|
 | `tables` | Feature-by-sample CSV input |
 | `hub` | Programmatic Hugging Face downloads |
+| `ntv3` | Legacy NTv3 encoding of user-provided FASTA sequences |
 | `notebook` | JupyterLab, tutorial execution and visualization |
 | `test` | Unit tests |
 | `dev` | Tests, linting, distribution builds and metadata checks |
 
 ## Development installation
+
+To encode representative DNA sequences, install `.[ntv3]` and follow the
+[sequence encoding guide](SEQUENCES.md). NTv3 weights are obtained separately
+from InstaDeepAI; ordinary MGM2 inference uses an existing embedding bank and
+does not require Transformers.
 
 ```bash
 python -m pip install -e '.[tables,notebook,dev]'

@@ -29,6 +29,8 @@ jobs:
           python -m pytest "$GITHUB_WORKSPACE/tests" -q
           mgm2-embed --version
           mgm2-embed --help
+          mgm2-encode-fasta --version
+          mgm2-encode-fasta --help
       - uses: actions/upload-artifact@v4
         with:
           name: distributions-python-${{ matrix.python }}

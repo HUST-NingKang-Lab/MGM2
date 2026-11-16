@@ -1,5 +1,9 @@
 # Interactive tutorial
 
+[02_sequence_encoding.ipynb](02_sequence_encoding.ipynb) demonstrates FASTA
+validation, the legacy NTv3 encoder and inspection of the resulting bank.
+Encoding is opt-in because it loads the separately distributed NTv3 weights.
+
 [01_getting_started.ipynb](01_getting_started.ipynb) covers input preparation,
 Small community embeddings, contextual OTU representations, CSV export through
 the CLI, and formal XLarge SAE features. It uses constructed abundances over

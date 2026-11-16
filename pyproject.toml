@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mgm2-community"
-version = "2.0.1"
+version = "2.1.0"
 description = "Microbial General Model 2: multimodal representations of microbial community states and responses"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,6 +29,7 @@ Preprint = "https://doi.org/10.64898/2026.07.20.739063"
 
 [project.optional-dependencies]
 hub = ["huggingface-hub>=0.24"]
+ntv3 = ["transformers>=4.55,<5", "huggingface-hub>=0.34,<1"]
 tables = ["pandas>=2"]
 test = ["pytest>=7"]
 notebook = ["pandas>=2", "matplotlib>=3.7", "jupyterlab>=4", "ipykernel>=6", "nbclient>=0.10", "nbformat>=5.9", "nbconvert>=7"]
@@ -36,6 +37,7 @@ dev = ["pytest>=7", "build>=1.2", "twine>=5", "ruff>=0.6"]
 
 [project.scripts]
 mgm2-embed = "mgm2.cli:main"
+mgm2-encode-fasta = "mgm2.sequence_cli:main"
 
 [tool.setuptools]
 include-package-data = false

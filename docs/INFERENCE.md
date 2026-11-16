@@ -4,6 +4,10 @@ The CLI and Python table interface share the same preprocessing, batching and
 export implementation. Install the `tables` extra to work with CSVs or pandas
 DataFrames.
 
+For your own representative sequences, first create the HDF5 bank with
+[`mgm2-encode-fasta`](SEQUENCES.md). It uses the legacy NTv3 encoder and produces
+the same bank interface as the supplied OTU embeddings.
+
 ## Reuse a loaded model
 
 ```python
