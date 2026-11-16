@@ -28,8 +28,8 @@ interpreting microbial features in their ecological context.
 **MGM2 v2.0** trains community representations through CLS-conditioned abundance
 reconstruction and semantic alignment. See the [v2.0 release notes](docs/releases/v2.0.0.md).
 
-**Latest release: v2.1.0** — encode your own microbial sequences with legacy
-NTv3 and use them directly in MGM2. See the [release notes](docs/releases/v2.1.0.md).
+**Latest release: v2.1.1** — standardized English code comments and docstrings.
+See the [release notes](docs/releases/v2.1.1.md).
 
 The model family spans four encoder scales, from 4M to 33M parameters, and
 represents each community with up to 768 microbial tokens. This repository
@@ -101,7 +101,7 @@ Download the matching model bundle, containing `models/`, `embeddings/` and
 `sae/`, and set `MODEL_ROOT`:
 
 ```bash
-python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.1.0", local_dir="../MGM2-models")'
+python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.1.1", local_dir="../MGM2-models")'
 export MODEL_ROOT="$(cd ../MGM2-models && pwd)"
 ```
 
@@ -111,14 +111,14 @@ and [Development](docs/DEVELOPMENT.md) for package structure and tests.
 ## Checkpoints
 
 All pretrained checkpoints and embedding resources are available on
-[Hugging Face](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.0).
+[Hugging Face](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.1).
 
 | Model | Encoder parameters | Hidden dimension | Layers | Model directory |
 |---|---:|---:|---:|---|
-| MGM2-Small | 4,076,352 | 224 | 6 | [models/small](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.0/models/small) |
-| MGM2-Medium | 8,096,640 | 320 | 6 | [models/medium](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.0/models/medium) |
-| MGM2-Large | 15,083,520 | 384 | 8 | [models/large](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.0/models/large) |
-| MGM2-XLarge | 32,838,656 | 512 | 10 | [models/xlarge](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.0/models/xlarge) |
+| MGM2-Small | 4,076,352 | 224 | 6 | [models/small](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.1/models/small) |
+| MGM2-Medium | 8,096,640 | 320 | 6 | [models/medium](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.1/models/medium) |
+| MGM2-Large | 15,083,520 | 384 | 8 | [models/large](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.1/models/large) |
+| MGM2-XLarge | 32,838,656 | 512 | 10 | [models/xlarge](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.1/models/xlarge) |
 
 Parameter counts refer to the community encoder. See the
 [model guide](docs/MODEL.md) for architecture details and the

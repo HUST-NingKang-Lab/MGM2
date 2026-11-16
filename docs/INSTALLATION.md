@@ -22,7 +22,7 @@ before installing MGM2. Device selection remains explicit in the API and CLI.
 ## Install from PyPI
 
 ```bash
-python -m pip install 'microformer-mgm2[tables,hub]==2.1.0'
+python -m pip install 'microformer-mgm2[tables,hub]==2.1.1'
 mgm2-embed --version
 ```
 
@@ -33,7 +33,7 @@ To switch an installation made under the former distribution name:
 
 ```bash
 python -m pip uninstall mgm2-community
-python -m pip install 'microformer-mgm2[tables,hub]==2.1.0'
+python -m pip install 'microformer-mgm2[tables,hub]==2.1.1'
 ```
 
 The Python import remains `mgm2`, and both command-line entry points are unchanged.
@@ -65,7 +65,7 @@ as the command-line interface.
 Download the model bundle accompanying this code release:
 
 ```bash
-python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.1.0", local_dir="../MGM2-models")'
+python -c 'from huggingface_hub import snapshot_download; snapshot_download(repo_id="LudensZhang/MGM2", revision="v2.1.1", local_dir="../MGM2-models")'
 export MODEL_ROOT="$(cd ../MGM2-models && pwd)"
 ```
 

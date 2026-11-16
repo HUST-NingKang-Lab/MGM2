@@ -9,7 +9,7 @@ responses. Pretrained on 1.82 million microbiomes, it integrates sequence
 identity, abundance and community descriptions to produce community-level
 embeddings and contextual microbial representations.
 
-![MGM2 workflow](https://raw.githubusercontent.com/HUST-NingKang-Lab/MGM2/v2.1.0/docs/assets/workflow.png)
+![MGM2 workflow](https://raw.githubusercontent.com/HUST-NingKang-Lab/MGM2/v2.1.1/docs/assets/workflow.png)
 
 ## Installation
 
@@ -27,12 +27,12 @@ For GPU use, install the appropriate [PyTorch build](https://pytorch.org/get-sta
 
 Four pretrained encoders, sequence and taxonomy embedding banks, and the
 XLarge sparse autoencoder are available on
-[Hugging Face](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.0).
+[Hugging Face](https://huggingface.co/LudensZhang/MGM2/tree/v2.1.1).
 
 ```python
 from huggingface_hub import snapshot_download
 
-snapshot_download("LudensZhang/MGM2", revision="v2.1.0", local_dir="MGM2-models")
+snapshot_download("LudensZhang/MGM2", revision="v2.1.1", local_dir="MGM2-models")
 ```
 
 ## Community embeddings
@@ -61,14 +61,14 @@ mgm2-encode-fasta --fasta representative_sequences.fasta \
 ```
 
 Use the generated bank with `mgm2-embed --embeddings outputs/asv_ntv3.h5`.
-See the [sequence guide](https://github.com/HUST-NingKang-Lab/MGM2/blob/v2.1.0/docs/SEQUENCES.md)
+See the [sequence guide](https://github.com/HUST-NingKang-Lab/MGM2/blob/v2.1.1/docs/SEQUENCES.md)
 for model access and local checkpoints.
 
 ## Resources
 
 - [Code and documentation](https://github.com/HUST-NingKang-Lab/MGM2)
-- [Getting-started notebook](https://github.com/HUST-NingKang-Lab/MGM2/blob/v2.1.0/notebooks/01_getting_started.ipynb)
-- [Sequence notebook](https://github.com/HUST-NingKang-Lab/MGM2/blob/v2.1.0/notebooks/02_sequence_encoding.ipynb)
+- [Getting-started notebook](https://github.com/HUST-NingKang-Lab/MGM2/blob/v2.1.1/notebooks/01_getting_started.ipynb)
+- [Sequence notebook](https://github.com/HUST-NingKang-Lab/MGM2/blob/v2.1.1/notebooks/02_sequence_encoding.ipynb)
 - [Feature atlas](https://www.mgm2atlas.com/)
 - [SAE interpretation agent](https://github.com/LudensZhang/mgm2-sae-agent)
 - [Preprint](https://doi.org/10.64898/2026.07.20.739063)

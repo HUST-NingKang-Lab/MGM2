@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "microformer-mgm2"
-version = "2.1.0"
+version = "2.1.1"
 description = "Microbial General Model 2: multimodal representations of microbial community states and responses"
 readme = "docs/PYPI.md"
 license = "MIT"

@@ -5,20 +5,16 @@ import torch.nn as nn
 
 
 class BaseModel(nn.Module):
-    """
-    微生物组基础Transformer模型
-
-    模仿transformers库的BaseModel结构
-    """
+    """Transformer encoder for microbial communities."""
 
     def __init__(
         self,
-        vocab_size: int = 10000,  # 虽然不直接使用，但保留以兼容tokenizer
-        embedding_dim: int = 1536,  # NTv3 embedding维度
-        hidden_size: int = 512,  # Transformer隐藏层维度
-        num_hidden_layers: int = 12,  # Transformer层数
-        num_attention_heads: int = 8,  # 注意力头数
-        intermediate_size: int = 2048,  # Feed-forward维度
+        vocab_size: int = 10000,  # Retained for tokenizer compatibility; not used directly.
+        embedding_dim: int = 1536,  # Static NTv3 embedding dimension.
+        hidden_size: int = 512,
+        num_hidden_layers: int = 12,
+        num_attention_heads: int = 8,
+        intermediate_size: int = 2048,
         hidden_dropout_prob: float = 0.1,
         attention_probs_dropout_prob: float = 0.1,
         layer_norm_eps: float = 1e-12,
@@ -53,7 +49,7 @@ class BaseModel(nn.Module):
             nn.Linear(hidden_size, hidden_size * 2),
         )
 
-        # 针对CLS token的独立可学习Embedding (不使用丰度条件化)
+        # Learn a separate CLS embedding without abundance conditioning.
         self.cls_embedding = nn.Embedding(1, hidden_size)
 
         # Layer Norm
@@ -70,18 +66,17 @@ class BaseModel(nn.Module):
             dropout=hidden_dropout_prob,
             activation="gelu",
             batch_first=True,
-            norm_first=True,  # Pre-LN结构，更稳定
+            norm_first=True,  # Pre-layer-normalization architecture.
         )
         self.encoder = nn.TransformerEncoder(
             encoder_layer,
             num_layers=num_hidden_layers,
         )
 
-        # 初始化权重
         self._init_weights()
 
     def _init_weights(self):
-        """初始化权重"""
+        """Initialize linear and embedding weights."""
         for module in self.modules():
             if isinstance(module, nn.Linear):
                 module.weight.data.normal_(mean=0.0, std=self.hidden_size**-0.5)
@@ -91,16 +86,16 @@ class BaseModel(nn.Module):
                 module.weight.data.normal_(mean=0.0, std=self.hidden_size**-0.5)
 
     def get_input_embeddings(self):
-        """获取输入embeddings（用于微调时更新）"""
+        """Return the input projection for fine-tuning."""
         return self.embedding_projection
 
     def set_input_embeddings(self, value):
-        """设置输入embeddings"""
+        """Replace the input embedding projection."""
         self.embedding_projection = value
 
     def forward(
         self,
-        input_ids: torch.Tensor,  # [batch_size, seq_len] 用于区分特殊token
+        input_ids: torch.Tensor,  # [batch_size, seq_len]; identifies special tokens.
         embeddings: torch.Tensor,  # [batch_size, seq_len, embedding_dim]
         abundance_values: torch.Tensor,  # [batch_size, seq_len]
         attention_mask: Optional[torch.Tensor] = None,  # [batch_size, seq_len]
@@ -108,20 +103,18 @@ class BaseModel(nn.Module):
         return_dict: bool = True,
     ) -> Tuple[torch.Tensor, ...]:
         """
-        前向传播
+        Encode microbial identities conditioned on abundance.
 
         Args:
-            input_ids: 用于标识 CLS token
-            embeddings: NTv3 embeddings + CLS embedding
-            abundances: 丰度值
-            attention_mask: Attention mask（0表示padding）
-            head_mask: 注意力头mask
-            output_attentions: 是否返回注意力权重
-            output_hidden_states: 是否返回隐藏状态
-            return_dict: 是否返回字典格式
+            input_ids: Token IDs identifying CLS positions.
+            embeddings: NTv3 vectors with a placeholder at the CLS position.
+            abundance_values: Transformed abundance values for each token.
+            attention_mask: Valid-token mask; zero marks padding.
+            head_mask: Reserved for API compatibility; not used.
+            return_dict: Return a dictionary when True, otherwise a tuple.
 
         Returns:
-            根据参数返回不同格式的输出
+            Final hidden states and optional outputs, as a dictionary or tuple.
         """
         output_hidden_states = self.output_hidden_states
         output_attentions = self.output_attentions
@@ -134,7 +127,7 @@ class BaseModel(nn.Module):
         gamma, beta = film_params.chunk(2, dim=-1)
         hidden_states = base_hidden * (1.0 + gamma) + beta
 
-        # 替换 CLS token 的特征
+        # Replace CLS positions with the learned embedding.
         cls_positions = input_ids == self.cls_token_id
         if cls_positions.any():
             cls_embs = self.cls_embedding(
@@ -148,9 +141,8 @@ class BaseModel(nn.Module):
         # Dropout
         hidden_states = self.dropout(hidden_states)
 
-        # 处理attention mask
         if attention_mask is not None:
-            # 将0/1 mask转换为bool mask (True表示忽略)
+            # Convert the valid-token mask to a padding mask (True means ignored).
             attention_mask = attention_mask == 0
 
         # Transformer encoder
