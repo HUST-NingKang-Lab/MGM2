@@ -1,7 +1,7 @@
 # Microbial General Model 2 (MGM2)
 
-[![PyPI](https://img.shields.io/pypi/v/mgm2-community?style=flat)](https://pypi.org/project/mgm2-community/)
-[![Downloads](https://img.shields.io/pepy/dt/mgm2-community?style=flat&label=downloads)](https://pepy.tech/project/mgm2-community)
+[![PyPI](https://img.shields.io/pypi/v/microformer-mgm2?style=flat)](https://pypi.org/project/microformer-mgm2/)
+[![Downloads](https://img.shields.io/pepy/dt/microformer-mgm2?style=flat&label=downloads)](https://pepy.tech/project/microformer-mgm2)
 [![Hugging Face](https://img.shields.io/badge/Hugging_Face-Models-FFD21E?style=flat&logo=huggingface&logoColor=FFD21E)](https://huggingface.co/LudensZhang/MGM2)
 
 MGM2 is a multimodal foundation model for microbial community states and
@@ -16,11 +16,11 @@ embeddings and contextual microbial representations.
 Python 3.10 or later is required. Install the package and table-inference tools:
 
 ```bash
-python -m pip install 'mgm2-community[tables,hub]'
+python -m pip install 'microformer-mgm2[tables,hub]'
 mgm2-embed --help
 ```
 
-The distribution is `mgm2-community`; the Python import is `mgm2`.
+The distribution is `microformer-mgm2`; the Python import is `mgm2`.
 For GPU use, install the appropriate [PyTorch build](https://pytorch.org/get-started/locally/).
 
 ## Model resources
@@ -55,7 +55,7 @@ Encode representative FASTA sequences using legacy
 [NTv3_650M_pre](https://huggingface.co/InstaDeepAI/NTv3_650M_pre):
 
 ```bash
-python -m pip install 'mgm2-community[ntv3]'
+python -m pip install 'microformer-mgm2[ntv3]'
 mgm2-encode-fasta --fasta representative_sequences.fasta \
   --output outputs/asv_ntv3.h5 --device cuda:0 --trust-remote-code
 ```

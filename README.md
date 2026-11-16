@@ -1,8 +1,8 @@
 <h1 align="center">MGM2 as a Multimodal Foundation Model for Microbial Community States and Responses</h1>
 
 <p align="center">
-  <a href="https://pypi.org/project/mgm2-community/"><img src="https://img.shields.io/pypi/v/mgm2-community?style=flat" alt="PyPI version" height="20"></a>
-  <a href="https://pepy.tech/project/mgm2-community"><img src="https://img.shields.io/pepy/dt/mgm2-community?style=flat&amp;label=downloads" alt="PyPI downloads" height="20"></a>
+  <a href="https://pypi.org/project/microformer-mgm2/"><img src="https://img.shields.io/pypi/v/microformer-mgm2?style=flat" alt="PyPI version" height="20"></a>
+  <a href="https://pepy.tech/project/microformer-mgm2"><img src="https://img.shields.io/pepy/dt/microformer-mgm2?style=flat&amp;label=downloads" alt="PyPI downloads" height="20"></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white" alt="Python 3.10+" height="20"></a>
   <a href="#requirements"><img src="https://img.shields.io/badge/PyTorch-2.2%2B-EE4C2C?logo=pytorch&amp;logoColor=white" alt="PyTorch 2.2+" height="20"></a>
   <a href="https://huggingface.co/LudensZhang/MGM2"><img src="https://img.shields.io/badge/Hugging_Face-Models-FFD21E?style=flat&amp;logo=huggingface&amp;logoColor=FFD21E" alt="Hugging Face models" height="20"></a>
@@ -71,10 +71,10 @@ a CUDA device. Device placement is explicit through the
 
 ### Installation
 
-Install from [PyPI](https://pypi.org/project/mgm2-community/):
+Install from [PyPI](https://pypi.org/project/microformer-mgm2/):
 
 ```bash
-python -m pip install 'mgm2-community[tables,hub]'
+python -m pip install 'microformer-mgm2[tables,hub]'
 ```
 
 Or install from source in an isolated environment:

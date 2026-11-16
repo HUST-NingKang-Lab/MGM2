@@ -89,7 +89,7 @@ constructed abundances over real vocabulary entries; they illustrate the API.
 5. Upload the checked wheel and source distribution to PyPI, then verify an
    installation from the public index. Published versions are immutable.
 
-PyPI distributes `mgm2-community`; GitHub hosts source and documentation, and
+PyPI distributes `microformer-mgm2`; GitHub hosts source and documentation, and
 Hugging Face hosts model resources. Package-check CI validates artifacts;
 publication is a separate maintainer action. `docs/PYPI.md` supplies the package
 description with absolute links and hosted artwork. Model and code artifacts

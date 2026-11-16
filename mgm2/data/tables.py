@@ -34,7 +34,9 @@ def read_abundance_table(path):
     try:
         import pandas as pd
     except ImportError as exc:
-        raise ImportError("CSV support requires pandas: install 'mgm2-community[tables]'") from exc
+        raise ImportError(
+            "CSV support requires pandas: install 'microformer-mgm2[tables]'"
+        ) from exc
     path = Path(path)
     with path.open(newline="", encoding="utf-8-sig") as stream:
         header = next(csv.reader(stream), [])

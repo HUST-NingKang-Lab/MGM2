@@ -1,7 +1,7 @@
 # Installation
 
 MGM2 uses Python 3.10 or later. The Python distribution is named
-`mgm2-community`; its import namespace is `mgm2`. Model weights and embedding
+`microformer-mgm2`; its import namespace is `mgm2`. Model weights and embedding
 banks are distributed separately through Hugging Face.
 
 ## Create an environment
@@ -22,12 +22,21 @@ before installing MGM2. Device selection remains explicit in the API and CLI.
 ## Install from PyPI
 
 ```bash
-python -m pip install 'mgm2-community[tables,hub]==2.1.0'
+python -m pip install 'microformer-mgm2[tables,hub]==2.1.0'
 mgm2-embed --version
 ```
 
-For user-sequence encoding, install `mgm2-community[ntv3]`. Model weights remain
+For user-sequence encoding, install `microformer-mgm2[ntv3]`. Model weights remain
 separate downloads from Hugging Face.
+
+To switch an installation made under the former distribution name:
+
+```bash
+python -m pip uninstall mgm2-community
+python -m pip install 'microformer-mgm2[tables,hub]==2.1.0'
+```
+
+The Python import remains `mgm2`, and both command-line entry points are unchanged.
 
 ## Install from the source checkout
 
